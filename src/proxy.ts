@@ -77,9 +77,9 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<void> {
       return;
     }
 
-    // Only allow proxying to /v1/* paths — block path traversal
+    // Only allow proxying to /v1/* paths — block path traversal and SSRF
     const urlPath = req.url?.split('?')[0] ?? '';
-    if (!urlPath.startsWith(ALLOWED_PATH_PREFIX)) {
+    if (!urlPath.startsWith(ALLOWED_PATH_PREFIX) || urlPath.includes('..') || urlPath.includes('//')) {
       res.writeHead(403, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Forbidden', message: `Only ${ALLOWED_PATH_PREFIX}* paths are proxied` }));
       return;
@@ -116,8 +116,17 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<void> {
         console.log(`[dario] #${requestCount} ${req.method} ${req.url}`);
       }
 
-      // Forward to Anthropic with OAuth token + required beta flag
-      const targetUrl = `${ANTHROPIC_API}${req.url}`;
+      // Forward to Anthropic — construct URL safely to prevent SSRF
+      const targetUrl = new URL(urlPath, ANTHROPIC_API);
+      // Preserve query string from original request
+      const queryString = req.url?.includes('?') ? req.url.split('?')[1] : '';
+      if (queryString) targetUrl.search = queryString;
+      // Verify the constructed URL still points to Anthropic (defense in depth)
+      if (targetUrl.origin !== ANTHROPIC_API) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Forbidden' }));
+        return;
+      }
 
       // Merge any client-provided beta flags with the required oauth flag
       const clientBeta = req.headers['anthropic-beta'] as string | undefined;
@@ -137,7 +146,7 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<void> {
         'x-app': 'cli',
       };
 
-      const upstream = await fetch(targetUrl, {
+      const upstream = await fetch(targetUrl.toString(), {
         method: req.method ?? 'POST',
         headers,
         body: body.length > 0 ? body : undefined,
@@ -194,9 +203,10 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<void> {
         }
       }
     } catch (err) {
+      // Log full error server-side, return generic message to client
       console.error('[dario] Proxy error:', sanitizeError(err));
       res.writeHead(502, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'Proxy error', message: sanitizeError(err) }));
+      res.end(JSON.stringify({ error: 'Proxy error', message: 'Failed to reach upstream API' }));
     }
   });
 
