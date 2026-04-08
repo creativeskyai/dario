@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.2.1] - 2026-04-08
+
+### Fixed
+- `/health` and `/status` endpoints now handle query parameters correctly
+- Removed 76 lines of dead code (startOAuthFlow, exchangeCode, unused imports)
+- Deduplicated OAuth scope string into constant
+
+### Added
+- Trust & Transparency section in README with verification commands
+- CHANGELOG.md with full version history
+- CODEOWNERS file for code review enforcement
+- npm audit in CI pipeline (`--production --audit-level=high`)
+- Security badges (npm, CI, CodeQL, license, downloads)
+- Branch protection (CI required before merge)
+- Response SLA in SECURITY.md (48h ack, 7d fix for critical)
+
 ## [1.2.0] - 2026-04-08
 
 ### Added
