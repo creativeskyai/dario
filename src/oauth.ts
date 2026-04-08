@@ -6,7 +6,7 @@
  */
 
 import { randomBytes, createHash } from 'node:crypto';
-import { readFile, writeFile, mkdir, chmod } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, chmod, rename } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
 
@@ -78,7 +78,6 @@ async function saveCredentials(creds: CredentialsFile): Promise<void> {
   // Write atomically: write to temp file, then rename
   const tmpPath = `${path}.tmp.${Date.now()}`;
   await writeFile(tmpPath, JSON.stringify(creds, null, 2), { mode: 0o600 });
-  const { rename } = await import('node:fs/promises');
   await rename(tmpPath, path);
   // Set permissions (best-effort — no-op on Windows where mode is ignored)
   try { await chmod(path, 0o600); } catch { /* Windows ignores file modes */ }
@@ -126,11 +125,11 @@ export async function exchangeCode(code: string, codeVerifier: string): Promise<
       redirect_uri: OAUTH_REDIRECT_URI,
       code_verifier: codeVerifier,
     }),
+    signal: AbortSignal.timeout(30000),
   });
 
   if (!res.ok) {
-    const err = await res.text().catch(() => 'Unknown error');
-    throw new Error(`Token exchange failed (${res.status}): ${err}`);
+    throw new Error(`Token exchange failed (${res.status}). Check your authorization code and try again.`);
   }
 
   const data = await res.json() as {
@@ -246,6 +245,7 @@ export async function getStatus(): Promise<{
   status: 'healthy' | 'expiring' | 'expired' | 'none';
   expiresAt?: number;
   expiresIn?: string;
+  canRefresh?: boolean;
 }> {
   const creds = await loadCredentials();
   if (!creds?.claudeAiOauth?.accessToken) {
@@ -256,7 +256,9 @@ export async function getStatus(): Promise<{
   const now = Date.now();
 
   if (expiresAt < now) {
-    return { authenticated: false, status: 'expired', expiresAt };
+    // Expired but has refresh token — can be refreshed
+    const canRefresh = !!creds.claudeAiOauth.refreshToken;
+    return { authenticated: false, status: 'expired', expiresAt, canRefresh };
   }
 
   const ms = expiresAt - now;

@@ -42,6 +42,16 @@ function getOsName(): string {
 // Persistent session ID per proxy lifetime (like Claude Code does per session)
 const SESSION_ID = randomUUID();
 
+// Detect @anthropic-ai/sdk version from installed package
+function detectSdkVersion(): string {
+  try {
+    const pkg = require('@anthropic-ai/sdk/package.json') as { version?: string };
+    return pkg.version ?? '0.81.0';
+  } catch {
+    return '0.81.0';
+  }
+}
+
 interface ProxyOptions {
   port?: number;
   verbose?: boolean;
@@ -65,6 +75,7 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<void> {
   }
 
   const cliVersion = detectClaudeVersion();
+  const sdkVersion = detectSdkVersion();
   let requestCount = 0;
   let tokenCostEstimate = 0;
 
@@ -126,7 +137,6 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<void> {
     // Proxy to Anthropic
     try {
       const accessToken = await getAccessToken();
-      requestCount++;
 
       // Read request body with size limit
       const chunks: Buffer[] = [];
@@ -179,7 +189,7 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<void> {
         'x-stainless-arch': arch,
         'x-stainless-lang': 'js',
         'x-stainless-os': getOsName(),
-        'x-stainless-package-version': '0.81.0',
+        'x-stainless-package-version': sdkVersion,
         'x-stainless-retry-count': '0',
         'x-stainless-runtime': 'node',
         'x-stainless-runtime-version': nodeVersion,
@@ -211,6 +221,7 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<void> {
         if (v) responseHeaders[h] = v;
       }
 
+      requestCount++;
       res.writeHead(upstream.status, responseHeaders);
 
       if (isStream && upstream.body) {
@@ -249,6 +260,15 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<void> {
       res.writeHead(502, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Proxy error', message: 'Failed to reach upstream API' }));
     }
+  });
+
+  server.on('error', (err: NodeJS.ErrnoException) => {
+    if (err.code === 'EADDRINUSE') {
+      console.error(`[dario] Port ${port} is already in use. Is another dario proxy running?`);
+    } else {
+      console.error(`[dario] Server error: ${err.message}`);
+    }
+    process.exit(1);
   });
 
   server.listen(port, LOCALHOST, () => {

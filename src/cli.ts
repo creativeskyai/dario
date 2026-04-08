@@ -18,7 +18,7 @@ import { startOAuthFlow, exchangeCode, getStatus, refreshTokens } from './oauth.
 import { startProxy } from './proxy.js';
 
 const args = process.argv.slice(2);
-const command = args[0] ?? 'proxy';
+const command = args[0] ?? (process.stdin.isTTY ? 'proxy' : 'proxy');
 
 function ask(question: string): Promise<string> {
   const rl = createInterface({ input: process.stdin, output: process.stdout });
@@ -95,9 +95,15 @@ async function status() {
   console.log('');
 
   if (!s.authenticated) {
-    console.log(`  Status: ${s.status === 'expired' ? 'Expired (will auto-refresh)' : 'Not authenticated'}`);
-    if (s.status === 'none') {
+    if (s.status === 'expired' && s.canRefresh) {
+      console.log('  Status: Expired (will auto-refresh when proxy starts)');
+      console.log('  Run `dario refresh` to refresh now, or `dario proxy` to start.');
+    } else if (s.status === 'none') {
+      console.log('  Status: Not authenticated');
       console.log('  Run `dario login` to authenticate.');
+    } else {
+      console.log(`  Status: ${s.status}`);
+      console.log('  Run `dario login` to re-authenticate.');
     }
   } else {
     console.log(`  Status: ${s.status}`);
