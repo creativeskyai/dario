@@ -311,6 +311,7 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<void> {
         'interleaved-thinking-2025-05-14',
         'prompt-caching-scope-2026-01-05',
         'claude-code-20250219',
+        'context-management-2025-06-27',
       ]);
       if (clientBeta) {
         for (const flag of clientBeta.split(',')) {
@@ -326,6 +327,7 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<void> {
         'anthropic-version': req.headers['anthropic-version'] as string || '2023-06-01',
         'anthropic-beta': [...betaFlags].join(','),
         'anthropic-dangerous-direct-browser-access': 'true',
+        'anthropic-client-platform': 'cli',
         'user-agent': `claude-cli/${cliVersion} (external, cli)`,
         'x-app': 'cli',
         'x-claude-code-session-id': SESSION_ID,
@@ -357,10 +359,11 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<void> {
         'Access-Control-Allow-Origin': CORS_ORIGIN,
       };
 
-      // Forward rate limit headers
-      for (const h of ['x-ratelimit-limit-requests', 'x-ratelimit-limit-tokens', 'x-ratelimit-remaining-requests', 'x-ratelimit-remaining-tokens', 'request-id']) {
-        const v = upstream.headers.get(h);
-        if (v) responseHeaders[h] = v;
+      // Forward rate limit headers (including unified subscription headers)
+      for (const [key, value] of upstream.headers.entries()) {
+        if (key.startsWith('x-ratelimit') || key.startsWith('anthropic-ratelimit') || key === 'request-id') {
+          responseHeaders[key] = value;
+        }
       }
 
       requestCount++;
@@ -430,6 +433,33 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<void> {
     console.log('');
   });
 
+  // Session presence heartbeat — registers this proxy as an active Claude Code session
+  // Claude Code sends this every 5 seconds; the server uses it for priority routing
+  const clientId = randomUUID();
+  const connectedAt = new Date().toISOString();
+  let lastPresencePulse = 0;
+
+  const presenceInterval = setInterval(async () => {
+    const now = Date.now();
+    if (now - lastPresencePulse < 5000) return;
+    lastPresencePulse = now;
+    try {
+      const token = await getAccessToken();
+      const presenceUrl = `${ANTHROPIC_API}/v1/code/sessions/${SESSION_ID}/client/presence`;
+      await fetch(presenceUrl, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+          'anthropic-version': '2023-06-01',
+          'anthropic-client-platform': 'cli',
+        },
+        body: JSON.stringify({ client_id: clientId, connected_at: connectedAt }),
+        signal: AbortSignal.timeout(5000),
+      }).catch(() => {});
+    } catch { /* presence is best-effort */ }
+  }, 5000);
+
   // Periodic token refresh (every 15 minutes)
   const refreshInterval = setInterval(async () => {
     try {
@@ -446,6 +476,7 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<void> {
   // Graceful shutdown
   const shutdown = () => {
     console.log('\n[dario] Shutting down...');
+    clearInterval(presenceInterval);
     clearInterval(refreshInterval);
     server.close(() => process.exit(0));
     // Force exit after 5s if connections don't close

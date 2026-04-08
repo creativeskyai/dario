@@ -10,9 +10,9 @@ import { readFile, writeFile, mkdir, chmod, rename } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
 
-// Claude CLI's public OAuth client (PKCE, no secret needed)
+// Claude Code's public OAuth client (PKCE, no secret needed)
 const OAUTH_CLIENT_ID = '9d1c250a-e61b-44d9-88ed-5944d1962f5e';
-const OAUTH_AUTHORIZE_URL = 'https://claude.ai/oauth/authorize';
+const OAUTH_AUTHORIZE_URL = 'https://platform.claude.com/oauth/authorize';
 const OAUTH_TOKEN_URL = 'https://platform.claude.com/v1/oauth/token';
 const OAUTH_REDIRECT_URI = 'https://platform.claude.com/oauth/code/callback';
 
@@ -48,8 +48,12 @@ function generatePKCE(): { codeVerifier: string; codeChallenge: string } {
   return { codeVerifier, codeChallenge };
 }
 
-function getCredentialsPath(): string {
+function getDarioCredentialsPath(): string {
   return join(homedir(), '.dario', 'credentials.json');
+}
+
+function getClaudeCodeCredentialsPath(): string {
+  return join(homedir(), '.claude', '.credentials.json');
 }
 
 export async function loadCredentials(): Promise<CredentialsFile | null> {
@@ -57,23 +61,24 @@ export async function loadCredentials(): Promise<CredentialsFile | null> {
   if (credentialsCache && Date.now() - credentialsCacheTime < CACHE_TTL_MS) {
     return credentialsCache;
   }
-  try {
-    const raw = await readFile(getCredentialsPath(), 'utf-8');
-    const parsed = JSON.parse(raw);
-    // Validate structure
-    if (!parsed?.claudeAiOauth?.accessToken || !parsed?.claudeAiOauth?.refreshToken) {
-      return null;
-    }
-    credentialsCache = parsed as CredentialsFile;
-    credentialsCacheTime = Date.now();
-    return credentialsCache;
-  } catch {
-    return null;
+
+  // Try dario's own credentials first, then fall back to Claude Code's
+  for (const path of [getDarioCredentialsPath(), getClaudeCodeCredentialsPath()]) {
+    try {
+      const raw = await readFile(path, 'utf-8');
+      const parsed = JSON.parse(raw);
+      if (parsed?.claudeAiOauth?.accessToken && parsed?.claudeAiOauth?.refreshToken) {
+        credentialsCache = parsed as CredentialsFile;
+        credentialsCacheTime = Date.now();
+        return credentialsCache;
+      }
+    } catch { /* try next */ }
   }
+  return null;
 }
 
 async function saveCredentials(creds: CredentialsFile): Promise<void> {
-  const path = getCredentialsPath();
+  const path = getDarioCredentialsPath();
   await mkdir(dirname(path), { recursive: true });
   // Write atomically: write to temp file, then rename
   const tmpPath = `${path}.tmp.${Date.now()}`;
@@ -95,13 +100,14 @@ export function startOAuthFlow(): { authUrl: string; state: string; codeVerifier
   const state = base64url(randomBytes(16));
 
   const params = new URLSearchParams({
-    response_type: 'code',
+    code: 'true',
     client_id: OAUTH_CLIENT_ID,
+    response_type: 'code',
     redirect_uri: OAUTH_REDIRECT_URI,
-    scope: 'user:inference user:profile',
-    state,
+    scope: 'org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload',
     code_challenge: codeChallenge,
     code_challenge_method: 'S256',
+    state,
   });
 
   return {

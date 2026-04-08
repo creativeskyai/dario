@@ -2,7 +2,7 @@
   <h1 align="center">dario</h1>
   <p align="center"><strong>Use your Claude subscription as an API.</strong></p>
   <p align="center">
-    Two commands. No API key. Your Claude Max/Pro subscription becomes a local API endpoint<br/>that any tool, SDK, or framework can use.
+    One command. No API key. Your Claude Max/Pro subscription becomes a local API endpoint<br/>that any tool, SDK, or framework can use.
   </p>
 </p>
 
@@ -17,8 +17,7 @@
 ---
 
 ```bash
-npx @askalf/dario login   # authenticate with Claude
-npx @askalf/dario proxy   # start local API on :3456
+npx @askalf/dario login   # detects Claude Code credentials, starts proxy
 
 # now use it from anywhere
 export ANTHROPIC_BASE_URL=http://localhost:3456
@@ -39,6 +38,10 @@ You pay $100-200/mo for Claude Max or Pro. But that subscription only works on c
 
 ## Quick Start
 
+### Prerequisites
+
+[Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview) must be installed and logged in. Dario uses your existing Claude Code credentials — no separate authentication needed.
+
 ### Install
 
 ```bash
@@ -49,7 +52,6 @@ Or use npx (no install needed):
 
 ```bash
 npx @askalf/dario login
-npx @askalf/dario proxy
 ```
 
 ### Login
@@ -58,7 +60,9 @@ npx @askalf/dario proxy
 dario login
 ```
 
-Opens your browser to Claude's OAuth page. Log in, authorize, paste the redirect URL back. Takes 10 seconds.
+If Claude Code is installed and authenticated, dario detects your credentials automatically and starts the proxy. No browser, no OAuth flow, no pasting URLs.
+
+If Claude Code credentials aren't found, dario falls back to a manual OAuth flow.
 
 ### Start the proxy
 
@@ -114,8 +118,6 @@ Usage:
 Backend: Claude CLI (bypasses rate limits)
 Model: claude-opus-4-6 (all requests)
 ```
-
-**Requirements:** Claude Code must be installed (`npm install -g @anthropic-ai/claude-code` or already installed via the desktop app).
 
 **Trade-offs vs direct API mode:**
 
@@ -249,7 +251,7 @@ ANTHROPIC_BASE_URL=http://localhost:3456 ANTHROPIC_API_KEY=dario your-tool-here
 └──────────┘     └─────────────────┘     └──────────────────┘
 ```
 
-1. **`dario login`** — Standard PKCE OAuth flow. Opens Claude's auth page in your browser. You authorize, dario stores the tokens locally in `~/.dario/credentials.json`. No server involved, no secrets leave your machine.
+1. **`dario login`** — Detects your existing Claude Code credentials (`~/.claude/.credentials.json`) and starts the proxy automatically. If Claude Code isn't installed, falls back to a manual PKCE OAuth flow.
 
 2. **`dario proxy`** — Starts an HTTP server on localhost that implements the Anthropic Messages API. In direct mode, it swaps your API key for an OAuth bearer token. In CLI mode, it routes through the Claude Code binary.
 
@@ -259,7 +261,7 @@ ANTHROPIC_BASE_URL=http://localhost:3456 ANTHROPIC_API_KEY=dario your-tool-here
 
 | Command | Description |
 |---------|-------------|
-| `dario login` | Authenticate with your Claude account |
+| `dario login` | Detect credentials and start proxy |
 | `dario proxy` | Start the local API proxy |
 | `dario status` | Check if your token is healthy |
 | `dario refresh` | Force an immediate token refresh |
@@ -319,7 +321,7 @@ curl http://localhost:3456/health
 
 | Concern | How dario handles it |
 |---------|---------------------|
-| Credential storage | `~/.dario/credentials.json` with `0600` permissions (owner-only) |
+| Credential storage | Uses Claude Code's credentials or `~/.dario/credentials.json` with `0600` permissions |
 | OAuth flow | PKCE (Proof Key for Code Exchange) — no client secret needed |
 | Token transmission | OAuth tokens never leave localhost. Only forwarded to `api.anthropic.com` over HTTPS |
 | Network exposure | Proxy binds to `127.0.0.1` only — not accessible from other machines |
@@ -331,7 +333,7 @@ curl http://localhost:3456/health
 ## FAQ
 
 **Does this violate Anthropic's terms of service?**
-Dario uses the same public OAuth client ID and PKCE flow that Claude Code uses. It authenticates you as you, with your subscription, through Anthropic's official OAuth endpoints. The `--cli` mode literally uses Claude Code itself as the backend.
+Dario uses your existing Claude Code credentials with the same OAuth tokens. It authenticates you as you, with your subscription, through Anthropic's official API. The `--cli` mode literally uses Claude Code itself as the backend.
 
 **What subscription plans work?**
 Claude Max and Claude Pro. Any plan that lets you use Claude Code.
@@ -339,8 +341,11 @@ Claude Max and Claude Pro. Any plan that lets you use Claude Code.
 **Does it work with Claude Team / Enterprise?**
 Should work if your plan includes Claude Code access. Not tested yet — please open an issue with results.
 
+**Do I need Claude Code installed?**
+Yes. Dario reads your Claude Code credentials for authentication. Run `claude` to install and log in, then `dario login` picks up your credentials automatically.
+
 **What happens when my token expires?**
-Dario auto-refreshes tokens 30 minutes before expiry. You should never see an auth error in normal use. If something goes wrong, `dario refresh` forces an immediate refresh, or `dario login` to re-authenticate.
+Dario auto-refreshes tokens 30 minutes before expiry. You should never see an auth error in normal use. If something goes wrong, `dario refresh` forces an immediate refresh.
 
 **I'm getting rate limited on Opus. What do I do?**
 Use `--cli` mode: `dario proxy --cli`. This routes through the Claude Code binary, which continues working when direct API calls are rate limited. You can also enable [extra usage](https://support.claude.com/en/articles/12429409-manage-extra-usage-for-paid-claude-plans) in your Anthropic account settings to extend your limits at API rates.
@@ -349,7 +354,7 @@ Use `--cli` mode: `dario proxy --cli`. This routes through the Claude Code binar
 Claude subscriptions have rolling 5-hour and 7-day usage windows shared across claude.ai and Claude Code. See [Anthropic's docs](https://support.claude.com/en/articles/11647753-how-do-usage-and-length-limits-work) for details. In Claude Code, use `/usage` to check your current limits, or configure the [statusline](https://code.claude.com/docs/en/statusline) to show real-time 5h and 7d utilization percentages.
 
 **Can I run this on a server?**
-Dario binds to localhost by default. For server use, you'd need to handle the initial browser-based login on a machine with a browser, then copy `~/.dario/credentials.json` to your server. Auto-refresh will keep it alive from there.
+Dario binds to localhost by default. For server use, you'd need to handle the initial Claude Code login on a machine with a browser, then copy `~/.claude/.credentials.json` to your server. Auto-refresh will keep it alive from there.
 
 **Why "dario"?**
 Named after [Dario Amodei](https://en.wikipedia.org/wiki/Dario_Amodei), CEO of Anthropic.
@@ -381,7 +386,7 @@ PRs welcome. The codebase is ~700 lines of TypeScript across 4 files:
 
 | File | Purpose |
 |------|---------|
-| `src/oauth.ts` | PKCE flow, token storage, refresh logic |
+| `src/oauth.ts` | Token storage, refresh logic, Claude Code credential detection |
 | `src/proxy.ts` | HTTP proxy server + CLI backend |
 | `src/cli.ts` | CLI entry point |
 | `src/index.ts` | Library exports |

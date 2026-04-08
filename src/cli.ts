@@ -11,7 +11,7 @@
  */
 
 import { createInterface } from 'node:readline';
-import { unlink } from 'node:fs/promises';
+import { readFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { startOAuthFlow, exchangeCode, getStatus, refreshTokens } from './oauth.js';
@@ -32,8 +32,27 @@ function ask(question: string): Promise<string> {
 
 async function login() {
   console.log('');
-  console.log('  dario — Claude OAuth Login');
-  console.log('  ─────────────────────────');
+  console.log('  dario — Claude Login');
+  console.log('  ───────────────────');
+  console.log('');
+
+  // Check if Claude Code credentials exist
+  const ccPath = join(homedir(), '.claude', '.credentials.json');
+  try {
+    const raw = await readFile(ccPath, 'utf-8');
+    const parsed = JSON.parse(raw);
+    if (parsed?.claudeAiOauth?.accessToken && parsed?.claudeAiOauth?.refreshToken) {
+      const expiresAt = parsed.claudeAiOauth.expiresAt;
+      if (expiresAt > Date.now()) {
+        console.log('  Found Claude Code credentials. Starting proxy...');
+        console.log('');
+        await proxy();
+        return;
+      }
+    }
+  } catch { /* no Claude Code credentials, fall through to OAuth */ }
+
+  console.log('  No Claude Code credentials found. Starting OAuth flow...');
   console.log('');
 
   const { authUrl, codeVerifier } = startOAuthFlow();
