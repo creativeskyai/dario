@@ -14,7 +14,7 @@ import { createInterface } from 'node:readline';
 import { readFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
-import { startOAuthFlow, exchangeCode, getStatus, refreshTokens } from './oauth.js';
+import { startOAuthFlow, startAutoOAuthFlow, exchangeCode, getStatus, refreshTokens } from './oauth.js';
 import { startProxy } from './proxy.js';
 
 const args = process.argv.slice(2);
@@ -55,43 +55,10 @@ async function login() {
   console.log('  No Claude Code credentials found. Starting OAuth flow...');
   console.log('');
 
-  const { authUrl, codeVerifier } = startOAuthFlow();
-
-  console.log('  Step 1: Open this URL in your browser:');
-  console.log('');
-  console.log(`  ${authUrl}`);
-  console.log('');
-  console.log('  Step 2: Log in to your Claude account and authorize.');
-  console.log('');
-  console.log('  Step 3: After authorization, you\'ll be redirected to a page');
-  console.log('  that shows a code. Copy the FULL URL from your browser\'s');
-  console.log('  address bar (it contains the authorization code).');
-  console.log('');
-
-  const input = await ask('  Paste the redirect URL or authorization code: ');
-
-  // Extract code from URL or use raw input
-  let code = input;
   try {
-    const url = new URL(input);
-    // Only extract from trusted Anthropic redirect URLs
-    if (url.hostname === 'platform.claude.com' || url.hostname === 'claude.ai') {
-      code = url.searchParams.get('code') ?? input;
-    }
-  } catch {
-    // Not a URL, use as-is (raw code)
-  }
-
-  if (!code || code.length < 10 || code.length > 2048) {
-    console.error('  Invalid authorization code.');
-    process.exit(1);
-  }
-
-  try {
-    const tokens = await exchangeCode(code, codeVerifier);
+    const tokens = await startAutoOAuthFlow();
     const expiresIn = Math.round((tokens.expiresAt - Date.now()) / 60000);
 
-    console.log('');
     console.log('  Login successful!');
     console.log(`  Token expires in ${expiresIn} minutes (auto-refreshes).`);
     console.log('');

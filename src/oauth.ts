@@ -92,7 +92,7 @@ async function saveCredentials(creds: CredentialsFile): Promise<void> {
 }
 
 /**
- * Start the OAuth flow. Returns the authorization URL and PKCE state
+ * Start the OAuth flow (manual fallback). Returns the authorization URL and PKCE state
  * needed for the exchange step.
  */
 export function startOAuthFlow(): { authUrl: string; state: string; codeVerifier: string } {
@@ -115,6 +115,137 @@ export function startOAuthFlow(): { authUrl: string; state: string; codeVerifier
     state,
     codeVerifier,
   };
+}
+
+/**
+ * Automatic OAuth flow using a local callback server (same as Claude Code).
+ * Opens browser, captures the authorization code automatically.
+ */
+export async function startAutoOAuthFlow(): Promise<OAuthTokens> {
+  const { createServer } = await import('node:http');
+  const { codeVerifier, codeChallenge } = generatePKCE();
+  const state = base64url(randomBytes(16));
+
+  return new Promise((resolve, reject) => {
+    const server = createServer((req, res) => {
+      const url = new URL(req.url || '', `http://${req.headers.host || 'localhost'}`);
+      if (url.pathname !== '/callback') {
+        res.writeHead(404);
+        res.end();
+        return;
+      }
+
+      const code = url.searchParams.get('code');
+      const returnedState = url.searchParams.get('state');
+
+      if (!code) {
+        res.writeHead(400);
+        res.end('No authorization code received');
+        server.close();
+        reject(new Error('No authorization code received'));
+        return;
+      }
+
+      if (returnedState !== state) {
+        res.writeHead(400);
+        res.end('Invalid state parameter');
+        server.close();
+        reject(new Error('Invalid state parameter'));
+        return;
+      }
+
+      // Redirect browser to success page
+      res.writeHead(302, { Location: 'https://platform.claude.com/oauth/code/success?app=claude-code' });
+      res.end();
+
+      // Exchange the code for tokens
+      server.close();
+      exchangeCodeWithRedirect(code, codeVerifier, state, port)
+        .then(resolve)
+        .catch(reject);
+    });
+
+    let port = 0;
+    server.listen(0, 'localhost', () => {
+      const addr = server.address();
+      port = typeof addr === 'object' && addr ? addr.port : 0;
+
+      const params = new URLSearchParams({
+        code: 'true',
+        client_id: OAUTH_CLIENT_ID,
+        response_type: 'code',
+        redirect_uri: `http://localhost:${port}/callback`,
+        scope: 'org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload',
+        code_challenge: codeChallenge,
+        code_challenge_method: 'S256',
+        state,
+      });
+
+      const authUrl = `${OAUTH_AUTHORIZE_URL}?${params.toString()}`;
+
+      // Open browser
+      console.log('  Opening browser to sign in...');
+      console.log(`  If the browser didn't open, visit: ${authUrl}`);
+      console.log('');
+
+      // Open browser using platform-specific commands (no external deps)
+      const { exec } = require('node:child_process') as typeof import('node:child_process');
+      const cmd = process.platform === 'win32' ? `start "" "${authUrl}"`
+        : process.platform === 'darwin' ? `open "${authUrl}"`
+        : `xdg-open "${authUrl}"`;
+      exec(cmd, () => {});
+    });
+
+    server.on('error', (err: Error) => {
+      reject(new Error(`Failed to start OAuth callback server: ${err.message}`));
+    });
+
+    // Timeout after 5 minutes
+    setTimeout(() => {
+      server.close();
+      reject(new Error('OAuth flow timed out. Try again with `dario login`.'));
+    }, 300_000);
+  });
+}
+
+/**
+ * Exchange code using the localhost redirect URI.
+ */
+async function exchangeCodeWithRedirect(code: string, codeVerifier: string, state: string, port: number): Promise<OAuthTokens> {
+  const res = await fetch(OAUTH_TOKEN_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      grant_type: 'authorization_code',
+      client_id: OAUTH_CLIENT_ID,
+      code,
+      redirect_uri: `http://localhost:${port}/callback`,
+      code_verifier: codeVerifier,
+      state,
+    }),
+    signal: AbortSignal.timeout(30000),
+  });
+
+  if (!res.ok) {
+    throw new Error(`Token exchange failed (${res.status}). Try again with \`dario login\`.`);
+  }
+
+  const data = await res.json() as {
+    access_token: string;
+    refresh_token: string;
+    expires_in: number;
+    scope?: string;
+  };
+
+  const tokens: OAuthTokens = {
+    accessToken: data.access_token,
+    refreshToken: data.refresh_token,
+    expiresAt: Date.now() + data.expires_in * 1000,
+    scopes: data.scope?.split(' ') || ['user:inference'],
+  };
+
+  await saveCredentials({ claudeAiOauth: tokens });
+  return tokens;
 }
 
 /**
