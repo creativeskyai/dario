@@ -2,7 +2,7 @@
   <h1 align="center">dario</h1>
   <p align="center"><strong>Use your Claude subscription as an API.</strong></p>
   <p align="center">
-    One command. No API key. Your Claude Max/Pro subscription becomes a local API endpoint<br/>that any tool, SDK, or framework can use.
+    No API key needed. Your Claude Max/Pro subscription becomes a local API endpoint<br/>that any tool, SDK, or framework can use.
   </p>
 </p>
 
@@ -60,9 +60,9 @@ npx @askalf/dario login
 dario login
 ```
 
-If Claude Code is installed and authenticated, dario detects your credentials automatically and starts the proxy. No browser, no OAuth flow, no pasting URLs.
+If Claude Code is installed and authenticated, dario detects your credentials automatically and starts the proxy immediately. No browser, no OAuth flow, no pasting URLs.
 
-If Claude Code credentials aren't found, dario falls back to a manual OAuth flow.
+If Claude Code credentials aren't found, dario falls back to a manual OAuth flow. After completing the OAuth flow, run `dario proxy` to start the server.
 
 ### Start the proxy
 
