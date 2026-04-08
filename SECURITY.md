@@ -43,11 +43,18 @@ The following are in scope for security reports:
 
 ### Proxy Security
 - Binds to `127.0.0.1` only — not accessible from other machines
-- Only `/v1/*` API paths are proxied — all other paths are rejected
+- Allowlisted API paths only (`/v1/messages`, `/v1/models`, `/v1/complete`) — all other paths rejected
 - Only `GET` and `POST` methods are allowed
 - 10 MB request body size limit
-- Token patterns (`sk-ant-*`) are redacted from all error messages
+- 5-minute upstream timeout prevents hanging connections
+- Token patterns (`sk-ant-*`) are redacted from all error messages and tool output
 - CORS restricted to `http://localhost`
+- SSRF protection: internal networks (127.x, 10.x, 172.16-31.x, 192.168.x) and cloud metadata endpoints blocked
+
+### CLI Backend (`--cli` mode)
+- Routes through locally installed Claude Code binary
+- No direct network access — all requests go through Claude Code's internal pipeline
+- System prompts and conversation history passed via CLI arguments (no temp files)
 
 ### Network
 - All upstream traffic goes to `api.anthropic.com` over HTTPS/TLS
