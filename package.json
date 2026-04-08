@@ -21,6 +21,7 @@
   ],
   "scripts": {
     "build": "tsc",
+    "audit": "npm audit --production --audit-level=high",
     "prepublishOnly": "npm run build",
     "start": "node dist/cli.js",
     "dev": "tsx src/cli.ts"
@@ -40,7 +41,7 @@
     "cli",
     "developer-tools"
   ],
-  "author": "askalf",
+  "author": "askalf (https://github.com/askalf)",
   "license": "MIT",
   "repository": {
     "type": "git",

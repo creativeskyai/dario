@@ -7,6 +7,14 @@
 </p>
 
 <p align="center">
+  <a href="https://www.npmjs.com/package/@askalf/dario"><img src="https://img.shields.io/npm/v/@askalf/dario?color=blue" alt="npm version"></a>
+  <a href="https://github.com/askalf/dario/actions/workflows/ci.yml"><img src="https://github.com/askalf/dario/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/askalf/dario/actions/workflows/codeql.yml"><img src="https://github.com/askalf/dario/actions/workflows/codeql.yml/badge.svg" alt="CodeQL"></a>
+  <a href="https://github.com/askalf/dario/blob/master/LICENSE"><img src="https://img.shields.io/npm/l/@askalf/dario" alt="License"></a>
+  <a href="https://www.npmjs.com/package/@askalf/dario"><img src="https://img.shields.io/npm/dm/@askalf/dario" alt="Downloads"></a>
+</p>
+
+<p align="center">
   <a href="#quick-start">Quick Start</a> &bull;
   <a href="#how-it-works">How It Works</a> &bull;
   <a href="#usage-examples">Examples</a> &bull;
@@ -379,6 +387,32 @@ const token = await getAccessToken();
 // Check token health
 const status = await getStatus();
 console.log(status.expiresIn); // "11h 42m"
+```
+
+## Trust & Transparency
+
+Dario handles your OAuth tokens. Here's why you can trust it:
+
+| Signal | Status |
+|--------|--------|
+| **Source code** | ~1100 lines of TypeScript — small enough to read in one sitting |
+| **Dependencies** | 1 production dep (`@anthropic-ai/sdk`). Verify: `npm ls --production` |
+| **npm provenance** | Every release is [SLSA attested](https://www.npmjs.com/package/@askalf/dario) via GitHub Actions |
+| **Security scanning** | [CodeQL](https://github.com/askalf/dario/actions/workflows/codeql.yml) runs on every push and weekly |
+| **Credential handling** | Tokens never logged, redacted from errors, stored with 0600 permissions |
+| **Network scope** | Binds to 127.0.0.1 only. Upstream traffic goes exclusively to `api.anthropic.com` over HTTPS |
+| **No telemetry** | Zero analytics, tracking, or data collection of any kind |
+| **Audit trail** | [CHANGELOG.md](CHANGELOG.md) documents every release |
+| **Branch protection** | CI must pass before merge. CODEOWNERS enforces review |
+
+Verify the npm package matches this repo:
+
+```bash
+# Check provenance attestation
+npm audit signatures 2>/dev/null; npm view @askalf/dario dist.integrity
+
+# Check dependency tree (should be minimal)
+cd $(npm root -g)/@askalf/dario && npm ls --production
 ```
 
 ## Contributing

@@ -15,7 +15,8 @@ If you discover a security vulnerability in dario, please report it responsibly:
    - Description of the vulnerability
    - Steps to reproduce
    - Potential impact
-3. You will receive a response within 48 hours.
+3. **Response SLA:** Acknowledgment within 48 hours, fix within 7 days for critical issues.
+4. We will coordinate disclosure with you before publishing a fix.
 
 ## Scope
 
