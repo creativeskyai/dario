@@ -146,7 +146,7 @@ curl http://localhost:3456/v1/messages \
   -H "Content-Type: application/json" \
   -H "anthropic-version: 2023-06-01" \
   -d '{
-    "model": "claude-sonnet-4-6",
+    "model": "claude-opus-4-6",
     "max_tokens": 1024,
     "stream": true,
     "messages": [{"role": "user", "content": "Write a haiku about APIs"}]

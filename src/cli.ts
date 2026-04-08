@@ -166,7 +166,7 @@ async function help() {
     Example with curl:
       curl http://localhost:3456/v1/messages \\
         -H "Content-Type: application/json" \\
-        -d '{"model":"claude-sonnet-4-6","max_tokens":1024,"messages":[{"role":"user","content":"Hello"}]}'
+        -d '{"model":"claude-opus-4-6","max_tokens":1024,"messages":[{"role":"user","content":"Hello"}]}'
 
   Your subscription handles the billing. No API key needed.
   Tokens auto-refresh in the background — set it and forget it.
