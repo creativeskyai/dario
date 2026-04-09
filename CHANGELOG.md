@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.1.0] - 2026-04-09
+
+### Added
+- Optional proxy authentication via `DARIO_API_KEY` env var with timing-safe comparison
+- JWT and Bearer token redaction in error sanitization
+- `sanitizeError` exported from public API
+
+### Changed
+- CORS scoped to actual proxy port instead of all of localhost
+- Shared `sanitizeError` across all error paths (eliminated duplication)
+
+### Security
+- Credit: @GodsBoy (cherry-picked from PR #2)
+
 ## [2.0.0] - 2026-04-08
 
 ### Added
