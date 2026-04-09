@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.1.2] - 2026-04-09
+
+### Changed
+- README: lead with Cursor/Continue in tool list for discoverability
+- README: add "Also by AskAlf" ecosystem section
+- README: fix line count (~1000 → ~1100)
+
 ## [2.1.1] - 2026-04-09
 
 ### Security
