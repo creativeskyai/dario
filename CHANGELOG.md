@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.3.0] - 2026-04-09
+
+### Fixed
+- OpenAI streaming now translates tool_use blocks (previously silently dropped — tools via `/v1/chat/completions` in streaming mode now work)
+- Verbose logging no longer leaks query parameters (uses path only)
+- Background token refresh now handles 'expired' status, not just 'expiring'
+
+### Added
+- Concurrency control: max 10 concurrent upstream requests with FIFO queuing (prevents request flooding)
+
 ## [2.2.4] - 2026-04-09
 
 ### Changed

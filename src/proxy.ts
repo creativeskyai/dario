@@ -9,7 +9,24 @@ const DEFAULT_PORT = 3456;
 const MAX_BODY_BYTES = 10 * 1024 * 1024; // 10 MB — generous for large prompts, prevents abuse
 const UPSTREAM_TIMEOUT_MS = 300_000; // 5 min — matches Anthropic SDK default
 const BODY_READ_TIMEOUT_MS = 30_000; // 30s — prevents slow-loris on body reads
+const MAX_CONCURRENT = 10; // Max concurrent upstream requests
 const LOCALHOST = '127.0.0.1';
+
+// Simple semaphore for concurrency control
+class Semaphore {
+  private queue: (() => void)[] = [];
+  private active = 0;
+  constructor(private max: number) {}
+  async acquire(): Promise<void> {
+    if (this.active < this.max) { this.active++; return; }
+    return new Promise(resolve => { this.queue.push(() => { this.active++; resolve(); }); });
+  }
+  release(): void {
+    this.active--;
+    const next = this.queue.shift();
+    if (next) next();
+  }
+}
 
 // Detect installed Claude Code version at startup
 function detectClaudeVersion(): string {
@@ -77,19 +94,47 @@ function anthropicToOpenai(body: Record<string, unknown>): Record<string, unknow
 }
 
 /** Translate Anthropic SSE → OpenAI SSE. */
+// Track tool call state across stream chunks
+let _streamToolIndex = 0;
+let _streamToolId = '';
+
 function translateStreamChunk(line: string): string | null {
   if (!line.startsWith('data: ')) return null;
   const json = line.slice(6).trim();
   if (json === '[DONE]') return 'data: [DONE]\n\n';
   try {
     const e = JSON.parse(json) as Record<string, unknown>;
-    if (e.type === 'content_block_delta') {
-      const d = e.delta as { type: string; text?: string } | undefined;
-      if (d?.type === 'text_delta' && d.text)
-        return `data: ${JSON.stringify({ id: 'chatcmpl-dario', object: 'chat.completion.chunk', created: Math.floor(Date.now() / 1000), model: 'claude', choices: [{ index: 0, delta: { content: d.text }, finish_reason: null }] })}\n\n`;
+    const ts = Math.floor(Date.now() / 1000);
+
+    if (e.type === 'content_block_start') {
+      const block = e.content_block as { type: string; id?: string; name?: string } | undefined;
+      if (block?.type === 'tool_use' && block.name) {
+        _streamToolId = block.id ?? `call_${_streamToolIndex}`;
+        return `data: ${JSON.stringify({ id: 'chatcmpl-dario', object: 'chat.completion.chunk', created: ts, model: 'claude', choices: [{ index: 0, delta: { tool_calls: [{ index: _streamToolIndex, id: _streamToolId, type: 'function', function: { name: block.name, arguments: '' } }] }, finish_reason: null }] })}\n\n`;
+      }
     }
-    if (e.type === 'message_stop')
-      return `data: ${JSON.stringify({ id: 'chatcmpl-dario', object: 'chat.completion.chunk', created: Math.floor(Date.now() / 1000), model: 'claude', choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n`;
+
+    if (e.type === 'content_block_delta') {
+      const d = e.delta as { type: string; text?: string; partial_json?: string } | undefined;
+      if (d?.type === 'text_delta' && d.text)
+        return `data: ${JSON.stringify({ id: 'chatcmpl-dario', object: 'chat.completion.chunk', created: ts, model: 'claude', choices: [{ index: 0, delta: { content: d.text }, finish_reason: null }] })}\n\n`;
+      if (d?.type === 'input_json_delta' && d.partial_json)
+        return `data: ${JSON.stringify({ id: 'chatcmpl-dario', object: 'chat.completion.chunk', created: ts, model: 'claude', choices: [{ index: 0, delta: { tool_calls: [{ index: _streamToolIndex, function: { arguments: d.partial_json } }] }, finish_reason: null }] })}\n\n`;
+    }
+
+    if (e.type === 'content_block_stop') {
+      if (_streamToolId) {
+        _streamToolIndex++;
+        _streamToolId = '';
+      }
+      return null;
+    }
+
+    if (e.type === 'message_stop') {
+      _streamToolIndex = 0;
+      _streamToolId = '';
+      return `data: ${JSON.stringify({ id: 'chatcmpl-dario', object: 'chat.completion.chunk', created: ts, model: 'claude', choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n`;
+    }
   } catch {}
   return null;
 }
@@ -259,6 +304,7 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<void> {
   };
   const useCli = opts.cliBackend ?? false;
   let requestCount = 0;
+  const semaphore = new Semaphore(MAX_CONCURRENT);
 
   // Optional proxy authentication — pre-encode key buffer for performance
   const apiKey = process.env.DARIO_API_KEY;
@@ -339,7 +385,8 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<void> {
     if (!targetBase) { res.writeHead(403, JSON_HEADERS); res.end(ERR_FORBIDDEN); return; }
     if (req.method !== 'POST') { res.writeHead(405, JSON_HEADERS); res.end(ERR_METHOD); return; }
 
-    // Proxy to Anthropic
+    // Proxy to Anthropic (with concurrency control)
+    await semaphore.acquire();
     try {
       const accessToken = await getAccessToken();
 
@@ -404,7 +451,7 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<void> {
 
       if (verbose) {
         const modelInfo = modelOverride ? ` (model: ${modelOverride})` : '';
-        console.log(`[dario] #${requestCount} ${req.method} ${req.url}${modelInfo}`);
+        console.log(`[dario] #${requestCount} ${req.method} ${urlPath}${modelInfo}`);
       }
 
       // Merge client beta flags with defaults
@@ -507,6 +554,8 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<void> {
       console.error('[dario] Proxy error:', sanitizeError(err));
       res.writeHead(502, JSON_HEADERS);
       res.end(JSON.stringify({ error: 'Proxy error', message: 'Failed to reach upstream API' }));
+    } finally {
+      semaphore.release();
     }
   });
 
@@ -567,7 +616,7 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<void> {
   const refreshInterval = setInterval(async () => {
     try {
       const s = await getStatus();
-      if (s.status === 'expiring') {
+      if (s.status === 'expiring' || s.status === 'expired') {
         console.log('[dario] Token expiring, refreshing...');
         await getAccessToken(); // triggers refresh
       }
