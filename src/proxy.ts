@@ -598,11 +598,11 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<void> {
         console.log(`[dario] #${requestCount} ${req.method} ${urlPath}${modelInfo}`);
       }
 
-      // Beta flags matching native Claude Code v2.1.98.
-      // context-management and prompt-caching-scope are safe when metadata.user_id
-      // is present — billing classification depends on device identity, not betas.
+      // Conservative beta defaults — only betas confirmed safe for Max plans.
+      // context-management and prompt-caching-scope stripped: even with metadata.user_id,
+      // these may independently trigger Extra Usage billing (reported by @belangertrading).
       const clientBeta = req.headers['anthropic-beta'] as string | undefined;
-      let beta = 'oauth-2025-04-20,interleaved-thinking-2025-05-14,context-management-2025-06-27,prompt-caching-scope-2026-01-05,claude-code-20250219,advisor-tool-2026-03-01';
+      let beta = 'oauth-2025-04-20,interleaved-thinking-2025-05-14,claude-code-20250219,advisor-tool-2026-03-01';
       if (clientBeta) {
         const filtered = filterBillableBetas(clientBeta);
         if (filtered) beta += ',' + filtered;
