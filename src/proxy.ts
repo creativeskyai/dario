@@ -802,6 +802,8 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<void> {
         'Authorization': `Bearer ${accessToken}`,
         'anthropic-version': req.headers['anthropic-version'] as string || '2023-06-01',
         'anthropic-beta': beta,
+        // Real Claude Code adds x-client-request-id for firstParty + api.anthropic.com
+        'x-client-request-id': randomUUID(),
         // Real Claude Code sends 600 on first request, 300 on subsequent
         'x-stainless-timeout': requestCount <= 1 ? '600' : '300',
       };
