@@ -74,7 +74,7 @@ The following are in scope for security reports:
 ### CLI Backend (`--cli` mode)
 - Routes through locally installed Claude Code binary
 - Uses `spawn()` with array args (no shell interpretation)
-- System prompts and conversation history passed via CLI arguments (no temp files)
+- System prompts written to temp file with `0600` permissions, cleaned up after use (avoids OS arg size limit)
 
 ### Network
 - All upstream traffic goes to `api.anthropic.com` over HTTPS/TLS

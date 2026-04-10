@@ -68,7 +68,7 @@ Opus, Sonnet, Haiku — all models, streaming, tool use. Works with Cursor, Cont
 <tr>
 <td colspan="3" valign="top">
 
-*"The 429s were driving us crazy running a multi-agent stack on Claude Max — the CLI fallback was duct tape until you found the real fix. Billing tag in the system prompt is wild. v2.8.0 running clean, zero 429s."* — [@belangertrading](https://github.com/belangertrading), multi-agent stack on Claude Max
+*"The 429s were driving us crazy running a multi-agent stack on Claude Max. You found the billing tag, fixed the checksum, reverse-engineered the per-request hash from the binary — v2.8.5 running clean, zero reclassification."* — [@belangertrading](https://github.com/belangertrading), multi-agent stack on Claude Max
 
 </td>
 </tr>
@@ -80,7 +80,7 @@ Opus, Sonnet, Haiku — all models, streaming, tool use. Works with Cursor, Cont
 
 Most Claude subscription proxies have a critical billing problem: **Anthropic classifies their requests as third-party and routes all usage to Extra Usage billing** — even when you have Max plan limits available. You're paying for your subscription twice.
 
-dario is the only proxy that solves this. It injects native Claude Code device identity, billing classification tags, and priority routing into every request — so Anthropic's billing system treats your requests exactly like Claude Code itself. Your Max plan limits work correctly, and Opus/Sonnet stay available even at high utilization.
+dario is the only proxy that solves this. It injects native Claude Code device identity, per-request billing checksums (reverse-engineered from the Claude Code binary), and priority routing into every request — so Anthropic's billing system treats your requests exactly like Claude Code itself. Your Max plan limits work correctly, and Opus/Sonnet stay available even at high utilization.
 
 | | dario | Other proxies |
 |---|---|---|
@@ -88,6 +88,7 @@ dario is the only proxy that solves this. It injects native Claude Code device i
 | **Max plan limits** | Used correctly | Bypassed — billed separately |
 | **Device identity** | Injected automatically | Missing |
 | **Priority routing** | Billing tag + service_tier auto | Missing |
+| **Billing tag fingerprint** | Per-request SHA-256 matching binary RE | Static or missing |
 | **Beta flags** | Match Claude Code v2.1.100 | Outdated or missing |
 | **Billable beta filtering** | Strips surprise charges | Passes everything through |
 
@@ -415,7 +416,7 @@ Then run `hermes` normally — it routes through dario using your Claude subscri
 
 ### Direct API Mode
 - All Claude models (Opus 4.6, Sonnet 4.6, Haiku 4.5) + 1M extended context aliases (`opus1m`, `sonnet1m`)
-- **Native billing classification** — device identity metadata ensures Max plan limits work correctly
+- **Native billing classification** — device identity, per-request billing tag with SHA-256 checksums matching real Claude Code (extracted via binary RE), ensures Max plan limits work correctly
 - **Priority routing** — billing tag injection + `service_tier: 'auto'` activates per-model rate limits, keeping Opus/Sonnet available even at 100% overall utilization
 - **Adaptive thinking** — matches Claude Code's `{ type: 'adaptive' }` mode for optimal reasoning (auto-skipped for Haiku 4.5)
 - **Effort control** — injects `output_config: { effort: 'high' }` by default, or passes through client-specified effort level
@@ -585,7 +586,7 @@ npm run dev   # runs with tsx (no build needed)
 | Who | Contributions |
 |-----|---------------|
 | [@GodsBoy](https://github.com/GodsBoy) | Proxy authentication, token redaction, error sanitization ([#2](https://github.com/askalf/dario/pull/2)) |
-| [@belangertrading](https://github.com/belangertrading) | Billing classification investigation ([#4](https://github.com/askalf/dario/issues/4)), Opus/Sonnet 429 diagnosis + CLI fallback workaround ([#6](https://github.com/askalf/dario/issues/6)) |
+| [@belangertrading](https://github.com/belangertrading) | Billing classification investigation ([#4](https://github.com/askalf/dario/issues/4)), Opus/Sonnet 429 diagnosis + CLI fallback workaround ([#6](https://github.com/askalf/dario/issues/6)), billing reclassification root cause ([#7](https://github.com/askalf/dario/issues/7)) |
 
 ## Also by AskAlf
 
