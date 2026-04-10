@@ -295,7 +295,7 @@ const message = await client.messages.create({
 });
 ```
 
-### Streaming (direct API mode only)
+### Streaming
 
 ```bash
 curl http://localhost:3456/v1/messages \
@@ -361,6 +361,18 @@ Then run `hermes` normally — it routes through dario using your Claude subscri
 └──────────┘     └─────────────────┘     └──────────────────┘
 ```
 
+### Passthrough Mode (`--passthrough`)
+
+```
+┌──────────┐     ┌─────────────────┐     ┌──────────────────┐
+│ Your App │ ──> │  dario (proxy)  │ ──> │ api.anthropic.com│
+│          │     │  localhost:3456  │     │                  │
+│ sends    │     │  swaps API key  │     │  sees valid      │
+│ API      │     │  for OAuth      │     │  OAuth bearer    │
+│ request  │     │  nothing else   │     │  token           │
+└──────────┘     └─────────────────┘     └──────────────────┘
+```
+
 1. **`dario login`** — Detects your existing Claude Code credentials (`~/.claude/.credentials.json`) and starts the proxy automatically. If Claude Code isn't installed, runs a PKCE OAuth flow with a local callback server to capture the token automatically.
 
 2. **`dario proxy`** — Starts an HTTP server on localhost that implements the Anthropic Messages API. In direct mode, it swaps your API key for an OAuth bearer token. In CLI mode, it routes through the Claude Code binary.
@@ -394,8 +406,10 @@ Then run `hermes` normally — it routes through dario using your Claude subscri
 ### Direct API Mode
 - All Claude models (Opus 4.6, Sonnet 4.6, Haiku 4.5) + 1M extended context aliases (`opus1m`, `sonnet1m`)
 - **Native billing classification** — device identity metadata ensures Max plan limits work correctly
-- **Priority routing** — billing tag injection + `service_tier: auto` activates per-model rate limits, keeping Opus/Sonnet available even at 100% overall utilization
-- **Adaptive thinking** — matches Claude Code's `{ type: 'adaptive' }` mode for optimal reasoning
+- **Priority routing** — billing tag injection + `service_tier: 'auto'` activates per-model rate limits, keeping Opus/Sonnet available even at 100% overall utilization
+- **Adaptive thinking** — matches Claude Code's `{ type: 'adaptive' }` mode for optimal reasoning (auto-skipped for Haiku 4.5)
+- **Effort control** — injects `output_config: { effort: 'high' }` by default, or passes through client-specified effort level
+- **Enriched 429 errors** — rate limit errors include utilization %, limiting window, and reset time instead of Anthropic's default `"Error"` message
 - **Auto CLI fallback** — if the API returns 429 and Claude Code is installed, transparently retries through `claude --print` with SSE conversion
 - **OpenAI-compatible** (`/v1/chat/completions`) — works with any OpenAI SDK or tool
 - Streaming and non-streaming (both Anthropic and OpenAI SSE formats, including tool_use streaming)
@@ -410,9 +424,16 @@ Then run `hermes` normally — it routes through dario using your Claude subscri
 
 ### CLI Backend Mode
 - All Claude models — including Opus when rate limited
-- Streaming via SSE conversion (client sends `stream: true`, CLI response is converted to SSE events)
+- Streaming via SSE conversion (client sends `stream: true`, CLI JSON response is converted to Anthropic or OpenAI SSE events)
+- OpenAI compatibility (translates OpenAI → Anthropic before CLI, Anthropic → OpenAI after)
 - System prompts and multi-turn conversations (via context injection)
 - Not affected by API rate limits
+
+### Passthrough Mode
+- All Claude models with native streaming and tool use
+- OAuth token swap only — no billing tag, thinking, effort, service_tier, or device identity injection
+- Minimal beta flags (`oauth-2025-04-20` + client betas only)
+- For tools like Hermes or OpenClaw that need exact Anthropic protocol fidelity
 
 ## Endpoints
 
@@ -470,7 +491,7 @@ Recommended but not required. If Claude Code is installed and logged in, `dario 
 Dario auto-refreshes tokens 30 minutes before expiry. You should never see an auth error in normal use. If something goes wrong, `dario refresh` forces an immediate refresh.
 
 **I'm getting rate limited on Opus. What do I do?**
-Use `--cli` mode: `dario proxy --cli`. This routes through the Claude Code binary, which continues working when direct API calls are rate limited. You can also enable [extra usage](https://support.claude.com/en/articles/12429409-manage-extra-usage-for-paid-claude-plans) in your Anthropic account settings to extend your limits at API rates.
+Use `--cli` mode: `dario proxy --cli`. This routes through the Claude Code binary, which continues working when direct API calls are rate limited. In default mode, dario automatically falls back to CLI when it detects a 429 (if Claude Code is installed). Rate limit errors include utilization percentages and reset times so you can see exactly when capacity returns. You can also enable [extra usage](https://support.claude.com/en/articles/12429409-manage-extra-usage-for-paid-claude-plans) in your Anthropic account settings to extend your limits at API rates.
 
 **What are the usage limits?**
 Claude subscriptions have rolling 5-hour and 7-day usage windows shared across claude.ai and Claude Code. See [Anthropic's docs](https://support.claude.com/en/articles/11647753-how-do-usage-and-length-limits-work) for details. In Claude Code, use `/usage` to check your current limits, or configure the [statusline](https://code.claude.com/docs/en/statusline) to show real-time 5h and 7d utilization percentages.
@@ -493,6 +514,9 @@ await startProxy({ port: 3456, verbose: true });
 
 // CLI backend mode
 await startProxy({ port: 3456, cliBackend: true, model: "opus" });
+
+// Passthrough mode (OAuth swap only, no injection)
+await startProxy({ port: 3456, passthrough: true });
 
 // Or just get a raw access token
 const token = await getAccessToken();
