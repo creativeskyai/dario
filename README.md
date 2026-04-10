@@ -92,7 +92,7 @@ dario is the only proxy that solves this. It injects native Claude Code device i
 | OpenAI API compat | **Yes** | Yes | Yes | Yes |
 | Orchestration sanitization | **Yes** | Yes | No | No |
 | Token anomaly detection | **Yes** | Yes | No | No |
-| Codebase size | ~1,500 lines | ~9,000 lines | Platform | Rust binary |
+| Codebase size | ~1,600 lines | ~9,000 lines | Platform | Rust binary |
 | Dependencies | 1 | Many | Many | Compiled |
 | Setup | 2 commands | Config + build | Config + dashboard | Config |
 
@@ -193,13 +193,23 @@ Model: claude-opus-4-6 (all requests)
 
 **Trade-offs vs direct API mode:**
 
-| | Direct API (default) | CLI Backend (`--cli`) |
-|---|---|---|
-| Streaming | Yes | No (full response) |
-| Tool use passthrough | Yes | No |
-| Latency | Low | Higher (process spawn) |
-| Rate limits | Subject to 5h/7d quotas | Not affected |
-| Opus when throttled | May return 429 | **Works** |
+| | Direct API (default) | CLI Backend (`--cli`) | Passthrough (`--passthrough`) |
+|---|---|---|---|
+| Streaming | Native SSE | SSE (converted from JSON) | Native SSE |
+| Tool use | Yes | No | Yes |
+| Thinking/billing injection | Yes (Claude-optimized) | N/A | No (OAuth swap only) |
+| Latency | Low | Higher (process spawn) | Low |
+| Rate limits | Priority routing | Not affected | Standard (no priority) |
+| Opus when throttled | Auto CLI fallback | **Always works** | May return 429 |
+
+## Passthrough Mode
+
+For tools like Hermes or OpenClaw that need exact Anthropic protocol fidelity, use `--passthrough`. This does OAuth swap only — no billing tag, no thinking injection, no device identity, no extra beta flags.
+
+```bash
+dario proxy --passthrough               # Thin proxy, zero injection
+dario proxy --passthrough --model=opus   # Thin proxy + model override
+```
 
 ## Model Selection
 
@@ -373,6 +383,7 @@ Then run `hermes` normally — it routes through dario using your Claude subscri
 | Flag/Env | Description | Default |
 |----------|-------------|---------|
 | `--cli` | Use Claude CLI as backend (bypasses rate limits) | off |
+| `--passthrough` | Thin proxy — OAuth swap only, no injection | off |
 | `--model=MODEL` | Force a model (`opus`, `sonnet`, `haiku`, or full ID) | passthrough |
 | `--port=PORT` | Port to listen on | `3456` |
 | `--verbose` / `-v` | Log every request | off |
@@ -399,7 +410,7 @@ Then run `hermes` normally — it routes through dario using your Claude subscri
 
 ### CLI Backend Mode
 - All Claude models — including Opus when rate limited
-- Non-streaming responses
+- Streaming via SSE conversion (client sends `stream: true`, CLI response is converted to SSE events)
 - System prompts and multi-turn conversations (via context injection)
 - Not affected by API rate limits
 
@@ -497,7 +508,7 @@ Dario handles your OAuth tokens. Here's why you can trust it:
 
 | Signal | Status |
 |--------|--------|
-| **Source code** | ~1,500 lines of TypeScript — small enough to audit in one sitting |
+| **Source code** | ~1,600 lines of TypeScript — small enough to audit in one sitting |
 | **Dependencies** | 1 production dep (`@anthropic-ai/sdk`). Verify: `npm ls --production` |
 | **npm provenance** | Every release is [SLSA attested](https://www.npmjs.com/package/@askalf/dario) via GitHub Actions |
 | **Security scanning** | [CodeQL](https://github.com/askalf/dario/actions/workflows/codeql.yml) runs on every push and weekly |
@@ -519,7 +530,7 @@ cd $(npm root -g)/@askalf/dario && npm ls --production
 
 ## Contributing
 
-PRs welcome. The codebase is ~1,500 lines of TypeScript across 4 files:
+PRs welcome. The codebase is ~1,600 lines of TypeScript across 4 files:
 
 | File | Purpose |
 |------|---------|
