@@ -10,10 +10,10 @@
  *   dario logout    — Remove saved credentials
  */
 
-import { readFile, unlink } from 'node:fs/promises';
+import { unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
-import { startAutoOAuthFlow, getStatus, refreshTokens } from './oauth.js';
+import { startAutoOAuthFlow, getStatus, refreshTokens, loadCredentials } from './oauth.js';
 import { startProxy, sanitizeError } from './proxy.js';
 
 const args = process.argv.slice(2);
@@ -25,21 +25,14 @@ async function login() {
   console.log('  ───────────────────');
   console.log('');
 
-  // Check if Claude Code credentials exist
-  const ccPath = join(homedir(), '.claude', '.credentials.json');
-  try {
-    const raw = await readFile(ccPath, 'utf-8');
-    const parsed = JSON.parse(raw);
-    if (parsed?.claudeAiOauth?.accessToken && parsed?.claudeAiOauth?.refreshToken) {
-      const expiresAt = parsed.claudeAiOauth.expiresAt;
-      if (expiresAt > Date.now()) {
-        console.log('  Found Claude Code credentials. Starting proxy...');
-        console.log('');
-        await proxy();
-        return;
-      }
-    }
-  } catch { /* no Claude Code credentials, fall through to OAuth */ }
+  // Check for existing credentials (Claude Code or dario's own)
+  const creds = await loadCredentials();
+  if (creds?.claudeAiOauth?.accessToken && creds.claudeAiOauth.expiresAt > Date.now()) {
+    console.log('  Found credentials. Starting proxy...');
+    console.log('');
+    await proxy();
+    return;
+  }
 
   console.log('  No Claude Code credentials found. Starting OAuth flow...');
   console.log('');
@@ -166,12 +159,11 @@ async function help() {
 }
 
 async function version() {
-  const { readFile } = await import('node:fs/promises');
-  const { fileURLToPath } = await import('node:url');
-  const { dirname, join } = await import('node:path');
   try {
-    const dir = dirname(fileURLToPath(import.meta.url));
-    const pkg = JSON.parse(await readFile(join(dir, '..', 'package.json'), 'utf-8'));
+    const { fileURLToPath } = await import('node:url');
+    const { readFile: rf } = await import('node:fs/promises');
+    const dir = join(fileURLToPath(import.meta.url), '..', '..');
+    const pkg = JSON.parse(await rf(join(dir, 'package.json'), 'utf-8'));
     console.log(pkg.version);
   } catch {
     console.log('unknown');

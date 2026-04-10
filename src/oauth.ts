@@ -6,7 +6,7 @@
  */
 
 import { randomBytes, createHash } from 'node:crypto';
-import { readFile, writeFile, mkdir, chmod, rename } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, rename } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
 
@@ -84,8 +84,6 @@ async function saveCredentials(creds: CredentialsFile): Promise<void> {
   const tmpPath = `${path}.tmp.${Date.now()}`;
   await writeFile(tmpPath, JSON.stringify(creds, null, 2), { mode: 0o600 });
   await rename(tmpPath, path);
-  // Set permissions (best-effort — no-op on Windows where mode is ignored)
-  try { await chmod(path, 0o600); } catch { /* Windows ignores file modes */ }
   // Invalidate cache so next read picks up the new tokens
   credentialsCache = creds;
   credentialsCacheTime = Date.now();
@@ -274,10 +272,10 @@ async function doRefreshTokens(): Promise<OAuthTokens> {
     };
 
     const tokens: OAuthTokens = {
-      ...oauth,
       accessToken: data.access_token,
       refreshToken: data.refresh_token,
       expiresAt: Date.now() + data.expires_in * 1000,
+      scopes: oauth.scopes,
     };
 
     await saveCredentials({ claudeAiOauth: tokens });

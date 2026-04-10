@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.8.1] - 2026-04-10
+
+### Fixed
+- **Haiku 400 on effort parameter**: `output_config.effort` is now skipped for Haiku 4.5, which does not support it
+
+### Changed
+- **Code reduction**: 1,618 → 1,505 lines (−7%) — merged duplicate CLI detection, extracted shared CLI response handler, removed dead token anomaly detection and extended context cooldown
+- **Cleaner imports**: Removed redundant `chmod` call, replaced `require('fs')` with proper ESM import, explicit `scopes` field instead of object spread
+
 ## [2.8.0] - 2026-04-10
 
 ### Added

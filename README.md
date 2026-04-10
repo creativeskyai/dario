@@ -92,7 +92,7 @@ dario is the only proxy that solves this. It injects native Claude Code device i
 | OpenAI API compat | **Yes** | Yes | Yes | Yes |
 | Orchestration sanitization | **Yes** | Yes | No | No |
 | Token anomaly detection | **Yes** | Yes | No | No |
-| Codebase size | ~1,600 lines | ~9,000 lines | Platform | Rust binary |
+| Codebase size | ~1,500 lines | ~9,000 lines | Platform | Rust binary |
 | Dependencies | 1 | Many | Many | Compiled |
 | Setup | 2 commands | Config + build | Config + dashboard | Config |
 
@@ -532,7 +532,7 @@ Dario handles your OAuth tokens. Here's why you can trust it:
 
 | Signal | Status |
 |--------|--------|
-| **Source code** | ~1,600 lines of TypeScript — small enough to audit in one sitting |
+| **Source code** | ~1,500 lines of TypeScript — small enough to audit in one sitting |
 | **Dependencies** | 1 production dep (`@anthropic-ai/sdk`). Verify: `npm ls --production` |
 | **npm provenance** | Every release is [SLSA attested](https://www.npmjs.com/package/@askalf/dario) via GitHub Actions |
 | **Security scanning** | [CodeQL](https://github.com/askalf/dario/actions/workflows/codeql.yml) runs on every push and weekly |
@@ -554,7 +554,7 @@ cd $(npm root -g)/@askalf/dario && npm ls --production
 
 ## Contributing
 
-PRs welcome. The codebase is ~1,600 lines of TypeScript across 4 files:
+PRs welcome. The codebase is ~1,500 lines of TypeScript across 4 files:
 
 | File | Purpose |
 |------|---------|

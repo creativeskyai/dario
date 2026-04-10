@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { randomUUID, timingSafeEqual } from 'node:crypto';
 import { execSync, spawn } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { arch, platform, version as nodeVersion } from 'node:process';
@@ -31,24 +31,16 @@ class Semaphore {
   }
 }
 
-// Detect installed Claude Code binary at startup
-function detectClaudeVersion(): string {
+// Detect installed Claude Code binary at startup (single exec for both version + availability)
+let cliAvailable = false;
+function detectCli(): string {
   try {
     const out = execSync('claude --version', { timeout: 5000, stdio: 'pipe' }).toString().trim();
-    const match = out.match(/^([\d.]+)/);
-    return match?.[1] ?? '2.1.96';
+    cliAvailable = true;
+    return out.match(/^([\d.]+)/)?.[1] ?? '2.1.96';
   } catch {
+    cliAvailable = false;
     return '2.1.96';
-  }
-}
-
-let cliAvailable = false;
-function detectCliAvailable(): boolean {
-  try {
-    execSync('claude --version', { timeout: 5000, stdio: 'pipe' });
-    return true;
-  } catch {
-    return false;
   }
 }
 
@@ -81,6 +73,45 @@ function jsonToSse(jsonBody: string): string {
   }
 }
 
+/** Convert CLI JSON response to OpenAI SSE format. */
+function jsonToOpenaiSse(jsonBody: string): string {
+  try {
+    const parsed = JSON.parse(jsonBody) as Record<string, unknown>;
+    const text = (parsed.content as Array<{ type: string; text?: string }> | undefined)?.find(c => c.type === 'text')?.text ?? '';
+    const ts = Math.floor(Date.now() / 1000);
+    return `data: ${JSON.stringify({ id: 'chatcmpl-dario', object: 'chat.completion.chunk', created: ts, model: 'claude', choices: [{ index: 0, delta: { content: text }, finish_reason: null }] })}\n\n` +
+      `data: ${JSON.stringify({ id: 'chatcmpl-dario', object: 'chat.completion.chunk', created: ts, model: 'claude', choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n`;
+  } catch { return ''; }
+}
+
+/** Send a CLI result to the client, handling streaming/format translation. */
+function sendCliResponse(
+  res: ServerResponse,
+  cliResult: { status: number; body: string; contentType: string },
+  clientWantsStream: boolean,
+  isOpenAI: boolean,
+  corsOrigin: string,
+  securityHeaders: Record<string, string>,
+): void {
+  const headers = { 'Access-Control-Allow-Origin': corsOrigin, ...securityHeaders };
+  const ok = cliResult.status >= 200 && cliResult.status < 300;
+
+  if (ok && clientWantsStream) {
+    const sseData = isOpenAI ? jsonToOpenaiSse(cliResult.body) : jsonToSse(cliResult.body);
+    if (sseData) {
+      res.writeHead(200, { 'Content-Type': 'text/event-stream', ...headers });
+      res.end(sseData);
+      return;
+    }
+  }
+
+  if (ok && isOpenAI) {
+    try { cliResult.body = JSON.stringify(anthropicToOpenai(JSON.parse(cliResult.body) as Record<string, unknown>)); } catch {}
+  }
+  res.writeHead(cliResult.status, { 'Content-Type': cliResult.contentType, ...headers });
+  res.end(cliResult.body);
+}
+
 const SESSION_ID = randomUUID();
 const OS_NAME = platform === 'win32' ? 'Windows' : platform === 'darwin' ? 'MacOS' : 'Linux';
 
@@ -96,7 +127,7 @@ function loadClaudeIdentity(): { deviceId: string; accountUuid: string } {
   // Also check backup files as fallback
   try {
     const backupDir = join(homedir(), '.claude', 'backups');
-    const files = require('fs').readdirSync(backupDir) as string[];
+    const files = readdirSync(backupDir) as string[];
     const backups = files
       .filter((f: string) => f.startsWith('.claude.json.backup.'))
       .sort()
@@ -180,33 +211,6 @@ function sanitizeMessages(body: Record<string, unknown>): void {
     }
   }
 }
-
-// Token anomaly detection — warns on suspicious patterns before billing surprises
-interface TokenSnapshot { inputTokens: number; outputTokens: number; cacheRead: number; }
-let lastTokenSnapshot: TokenSnapshot | null = null;
-
-function checkTokenAnomalies(usage: Record<string, number>, requestId: string): void {
-  const current: TokenSnapshot = {
-    inputTokens: usage.input_tokens ?? 0,
-    outputTokens: usage.output_tokens ?? 0,
-    cacheRead: usage.cache_read_input_tokens ?? 0,
-  };
-  if (lastTokenSnapshot && lastTokenSnapshot.inputTokens > 0) {
-    const growth = (current.inputTokens - lastTokenSnapshot.inputTokens) / lastTokenSnapshot.inputTokens;
-    if (growth > 0.6) {
-      const pct = Math.round(growth * 100);
-      console.warn(`[dario] TOKEN WARN ${requestId}: Input grew ${pct}% (${lastTokenSnapshot.inputTokens} → ${current.inputTokens}). Possible full replay.`);
-    }
-    if (current.outputTokens > lastTokenSnapshot.outputTokens * 2 && current.outputTokens > 2000) {
-      console.warn(`[dario] TOKEN WARN ${requestId}: Output explosion ${current.outputTokens} tokens (${Math.round(current.outputTokens / lastTokenSnapshot.outputTokens)}x previous).`);
-    }
-  }
-  lastTokenSnapshot = current;
-}
-
-// Extended context fallback — cooldown after 1M context failure
-let extendedContextUnavailableAt = 0;
-const EXTENDED_CONTEXT_COOLDOWN_MS = 60 * 60 * 1000; // 1 hour
 
 // OpenAI model names → Anthropic (fallback if client sends GPT names)
 const OPENAI_MODEL_MAP: Record<string, string> = {
@@ -471,8 +475,7 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<void> {
     process.exit(1);
   }
 
-  const cliVersion = detectClaudeVersion();
-  cliAvailable = detectCliAvailable();
+  const cliVersion = detectCli();
   const modelOverride = opts.model ? (MODEL_ALIASES[opts.model] ?? opts.model) : null;
   const identity = loadClaudeIdentity();
   if (identity.deviceId) {
@@ -632,38 +635,7 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<void> {
         }
         const cliResult = await handleViaCli(cliBody, modelOverride, verbose);
         requestCount++;
-
-        if (cliResult.status >= 200 && cliResult.status < 300 && clientWantsStream) {
-          // Client requested streaming — convert CLI JSON to SSE
-          if (isOpenAI) {
-            try {
-              const parsed = JSON.parse(cliResult.body) as Record<string, unknown>;
-              const text = (parsed.content as Array<{ type: string; text?: string }> | undefined)?.find(c => c.type === 'text')?.text ?? '';
-              const ts = Math.floor(Date.now() / 1000);
-              let sseData = `data: ${JSON.stringify({ id: 'chatcmpl-dario', object: 'chat.completion.chunk', created: ts, model: 'claude', choices: [{ index: 0, delta: { content: text }, finish_reason: null }] })}\n\n`;
-              sseData += `data: ${JSON.stringify({ id: 'chatcmpl-dario', object: 'chat.completion.chunk', created: ts, model: 'claude', choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n`;
-              res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Access-Control-Allow-Origin': corsOrigin, ...SECURITY_HEADERS });
-              res.end(sseData);
-            } catch {
-              res.writeHead(cliResult.status, { 'Content-Type': cliResult.contentType, 'Access-Control-Allow-Origin': corsOrigin, ...SECURITY_HEADERS });
-              res.end(cliResult.body);
-            }
-          } else {
-            const sseData = jsonToSse(cliResult.body);
-            res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Access-Control-Allow-Origin': corsOrigin, ...SECURITY_HEADERS });
-            res.end(sseData);
-          }
-        } else {
-          // Non-streaming or error — translate and return as JSON
-          if (isOpenAI && cliResult.status >= 200 && cliResult.status < 300) {
-            try {
-              const parsed = JSON.parse(cliResult.body) as Record<string, unknown>;
-              cliResult.body = JSON.stringify(anthropicToOpenai(parsed));
-            } catch { /* send as-is */ }
-          }
-          res.writeHead(cliResult.status, { 'Content-Type': cliResult.contentType, 'Access-Control-Allow-Origin': corsOrigin, ...SECURITY_HEADERS });
-          res.end(cliResult.body);
-        }
+        sendCliResponse(res, cliResult, clientWantsStream, isOpenAI, corsOrigin, SECURITY_HEADERS);
         return;
       }
 
@@ -674,10 +646,6 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<void> {
           const parsed = JSON.parse(body.toString()) as Record<string, unknown>;
           // Strip orchestration tags from messages (Aider, Cursor, etc.)
           sanitizeMessages(parsed);
-          // Handle 1M context: strip [1m] suffix if in cooldown
-          if (modelOverride?.includes('[1m]') && extendedContextUnavailableAt > 0 && Date.now() - extendedContextUnavailableAt < EXTENDED_CONTEXT_COOLDOWN_MS) {
-            parsed.model = (modelOverride as string).replace('[1m]', '');
-          }
           const result = isOpenAI ? openaiToAnthropic(parsed, modelOverride) : (modelOverride ? { ...parsed, model: modelOverride } : parsed);
           const r = result as Record<string, unknown>;
           // In passthrough mode, skip all Claude-specific injection — OAuth swap only
@@ -707,7 +675,8 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<void> {
               r.service_tier = 'auto';
             }
             // Set reasoning effort (pass through client value or default)
-            if (!r.output_config) {
+            // Haiku does not support the effort parameter
+            if (supportsThinking && !r.output_config) {
               r.output_config = { effort: 'high' };
             }
             // Enable context management (matches Claude Code default)
@@ -796,71 +765,15 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<void> {
         return;
       }
 
-      // Auto-fallback: if API returns 429 and CLI is available, retry through CLI binary.
-      // The CLI gets priority routing from Anthropic's server — a separate rate limit pool
-      // that continues working when the direct API quota is exhausted for expensive models.
+      // Auto-fallback: if API returns 429 and CLI is available, retry through CLI binary
       if (upstream.status === 429 && cliAvailable && !useCli) {
-        // Drain the upstream response
         await upstream.text().catch(() => {});
         if (verbose) console.log(`[dario] #${requestCount} 429 from API — falling back to CLI`);
-
-        // Determine if the client requested streaming
         let clientWantsStream = false;
-        if (body.length > 0) {
-          try {
-            const p = JSON.parse(body.toString()) as { stream?: boolean };
-            clientWantsStream = !!p.stream;
-          } catch {}
-        }
-
+        try { clientWantsStream = !!JSON.parse(body.toString()).stream; } catch {}
         const cliResult = await handleViaCli(body, modelOverride, verbose);
         requestCount++;
-
-        if (cliResult.status >= 200 && cliResult.status < 300) {
-          if (isOpenAI) {
-            // Translate to OpenAI format
-            try {
-              const parsed = JSON.parse(cliResult.body) as Record<string, unknown>;
-              cliResult.body = JSON.stringify(anthropicToOpenai(parsed));
-            } catch {}
-          }
-
-          if (clientWantsStream && !isOpenAI) {
-            // Client requested SSE streaming — convert CLI JSON to SSE events
-            const sseData = jsonToSse(cliResult.body);
-            res.writeHead(200, {
-              'Content-Type': 'text/event-stream',
-              'Access-Control-Allow-Origin': corsOrigin,
-              ...SECURITY_HEADERS,
-            });
-            res.end(sseData);
-          } else if (clientWantsStream && isOpenAI) {
-            // OpenAI streaming — convert Anthropic JSON to OpenAI SSE
-            try {
-              const parsed = JSON.parse(cliResult.body) as Record<string, unknown>;
-              const text = (parsed.content as Array<{ type: string; text?: string }> | undefined)?.find(c => c.type === 'text')?.text ?? '';
-              const ts = Math.floor(Date.now() / 1000);
-              let sseData = `data: ${JSON.stringify({ id: 'chatcmpl-dario', object: 'chat.completion.chunk', created: ts, model: 'claude', choices: [{ index: 0, delta: { content: text }, finish_reason: null }] })}\n\n`;
-              sseData += `data: ${JSON.stringify({ id: 'chatcmpl-dario', object: 'chat.completion.chunk', created: ts, model: 'claude', choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n`;
-              res.writeHead(200, {
-                'Content-Type': 'text/event-stream',
-                'Access-Control-Allow-Origin': corsOrigin,
-                ...SECURITY_HEADERS,
-              });
-              res.end(sseData);
-            } catch {
-              res.writeHead(cliResult.status, { 'Content-Type': cliResult.contentType, 'Access-Control-Allow-Origin': corsOrigin, ...SECURITY_HEADERS });
-              res.end(cliResult.body);
-            }
-          } else {
-            res.writeHead(cliResult.status, { 'Content-Type': cliResult.contentType, 'Access-Control-Allow-Origin': corsOrigin, ...SECURITY_HEADERS });
-            res.end(cliResult.body);
-          }
-        } else {
-          // CLI also failed — return the CLI error
-          res.writeHead(cliResult.status, { 'Content-Type': cliResult.contentType, 'Access-Control-Allow-Origin': corsOrigin, ...SECURITY_HEADERS });
-          res.end(cliResult.body);
-        }
+        sendCliResponse(res, cliResult, clientWantsStream, isOpenAI, corsOrigin, SECURITY_HEADERS);
         return;
       }
 
@@ -935,21 +848,6 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<void> {
       } else {
         // Buffer and forward
         const responseBody = await upstream.text();
-
-        // Check for extended context failure — cooldown to avoid repeated failures
-        if (upstream.status === 400 && responseBody.includes('extra_usage') && modelOverride?.includes('[1m]')) {
-          extendedContextUnavailableAt = Date.now();
-          console.warn('[dario] 1M context requires Extra Usage — falling back to standard context for 1 hour');
-        }
-
-        // Token anomaly detection on non-streaming responses
-        if (upstream.status >= 200 && upstream.status < 300) {
-          try {
-            const parsed = JSON.parse(responseBody) as Record<string, unknown>;
-            const usage = parsed.usage as Record<string, number> | undefined;
-            if (usage) checkTokenAnomalies(usage, responseHeaders['request-id'] ?? '');
-          } catch { /* ignore parse errors */ }
-        }
 
         if (isOpenAI && upstream.status >= 200 && upstream.status < 300) {
           // Translate Anthropic response → OpenAI format
