@@ -95,17 +95,17 @@ dario is the only proxy that solves this. It injects native Claude Code device i
 <details>
 <summary><strong>vs competitors</strong></summary>
 
-| Feature | dario | Meridian (710 stars) | CLIProxyAPI (24K stars) | claude-code-mux |
-|---------|-------|---------|------------|-----------------|
-| Native billing classification | **Yes** | No | Inherited (CLI-only) | No |
-| Direct OAuth (streaming, tools) | **Yes** | Yes (SDK-based) | No | No |
-| CLI fallback (rate limit bypass) | **Yes** | No | Yes (only mode) | No |
-| OpenAI API compat | **Yes** | Yes | Yes | Yes |
-| Orchestration sanitization | **Yes** | Yes | No | No |
-| Token anomaly detection | **Yes** | Yes | No | No |
-| Codebase size | ~1,500 lines | ~9,000 lines | Platform | Rust binary |
-| Dependencies | 1 | Many | Many | Compiled |
-| Setup | 2 commands | Config + build | Config + dashboard | Config |
+| Feature | dario | Meridian (710 stars) | CLIProxyAPI (24K stars) |
+|---------|-------|---------|------------|
+| Native billing classification | **Yes** | No | Inherited (CLI-only) |
+| Direct OAuth (streaming, tools) | **Yes** | Yes (SDK-based) | No |
+| CLI fallback (rate limit bypass) | **Yes** | No | Yes (only mode) |
+| OpenAI API compat | **Yes** | Yes | Yes |
+| Orchestration sanitization | **Yes** | Yes | No |
+| Token anomaly detection | **Yes** | Yes | No |
+| Codebase size | ~1,500 lines | ~9,000 lines | Platform |
+| Dependencies | 1 | Many | Many |
+| Setup | 2 commands | Config + build | Config + dashboard |
 
 </details>
 
@@ -588,15 +588,6 @@ npm run dev   # runs with tsx (no build needed)
 |-----|---------------|
 | [@GodsBoy](https://github.com/GodsBoy) | Proxy authentication, token redaction, error sanitization ([#2](https://github.com/askalf/dario/pull/2)) |
 | [@belangertrading](https://github.com/belangertrading) | Billing classification investigation ([#4](https://github.com/askalf/dario/issues/4)), Opus/Sonnet 429 diagnosis + CLI fallback workaround ([#6](https://github.com/askalf/dario/issues/6)), billing reclassification root cause ([#7](https://github.com/askalf/dario/issues/7)) |
-
-## Also by AskAlf
-
-| Project | What it does |
-|---------|-------------|
-| [platform](https://github.com/askalf/platform) | AI workforce with autonomous agents, teams, memory, and self-healing |
-| [agent](https://github.com/askalf/agent) | Connect any device to the workforce over WebSocket |
-| [claude-re](https://github.com/askalf/claude-re) | Claude Code reimplemented in Python |
-| [amnesia](https://github.com/askalf/amnesia) | Privacy search engine — 155 engines, zero tracking |
 
 ## License
 
