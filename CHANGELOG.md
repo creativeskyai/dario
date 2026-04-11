@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.9.5] - 2026-04-11
+
+### Fixed
+- **`max_tokens` capped at 64000** — Claude Code always sends `max_tokens: 64000`. Clients sending `128000` (e.g. OpenClaw) were triggering overage classification because the value doesn't match the real CC fingerprint. Now hard-capped regardless of client value. (#12)
+
 ## [2.9.3] - 2026-04-11
 
 ### Changed
