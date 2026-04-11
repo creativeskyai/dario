@@ -455,7 +455,7 @@ Add to your `openclaw.json` models config:
 ### Direct API Mode
 - All Claude models (Opus 4.6, Sonnet 4.6, Haiku 4.5) + 1M extended context aliases (`opus1m`, `sonnet1m`)
 - **Native billing classification** — device identity, per-request billing tag with SHA-256 checksums matching real Claude Code (extracted via binary RE), ensures Max plan limits work correctly
-- **Stealth layer** (v2.9.0) — strips thinking blocks from conversation history (saves 50-80% input tokens), scrubs non-CC fields (`temperature`, `top_p`, `top_k`, `stop_sequences`, `service_tier`), reorders JSON fields to match Claude Code's exact field order, and normalizes system prompts to exactly 3 blocks. Every request is indistinguishable from real Claude Code traffic.
+- **Template replay** (v3.0) — instead of transforming requests signal-by-signal, dario replaces the entire request with a Claude Code template. CC's exact tool definitions, field structure, and parameters are sent upstream. Only your conversation content is preserved. Tested with 40 third-party tools — all route to `five_hour`. See [Discussion #13](https://github.com/askalf/dario/discussions/13) for why this matters.
 - **Adaptive thinking** — matches Claude Code's `{ type: 'adaptive' }` mode for optimal reasoning (auto-skipped for Haiku 4.5)
 - **Effort control** — injects `output_config: { effort: 'medium' }` matching Claude Code's default, or passes through client-specified effort level
 - **Enriched 429 errors** — rate limit errors include utilization %, limiting window, and reset time instead of Anthropic's default `"Error"` message

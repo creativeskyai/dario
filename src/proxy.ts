@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { homedir, tmpdir } from 'node:os';
 import { arch, platform } from 'node:process';
 import { getAccessToken, getStatus } from './oauth.js';
+import { buildCCRequest, reverseMapResponse } from './cc-template.js';
 
 const ANTHROPIC_API = 'https://api.anthropic.com';
 const DEFAULT_PORT = 3456;
@@ -903,6 +904,7 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<void> {
       // Parse body once, apply OpenAI translation, model override, and sanitization
       let finalBody: Buffer | undefined = body.length > 0 ? body : undefined;
       let toolMappings: ToolNameMapping[] = [];
+      let ccToolMap: Map<string, { ccTool: string }> | null = null;
       if (body.length > 0) {
         try {
           const parsed = JSON.parse(body.toString()) as Record<string, unknown>;
@@ -912,74 +914,30 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<void> {
           const r = result as Record<string, unknown>;
           // In passthrough mode, skip all Claude-specific injection — OAuth swap only
           if (!passthrough) {
-            // ── Stealth layer: make request indistinguishable from real Claude Code ──
+            // ── Template replay: replace the entire request with a CC template ──
+            // Instead of transforming signals one by one, we build a new request
+            // from CC's exact template and inject only the conversation content.
+            // The upstream sees a genuine CC request structure.
 
-            // 1. Strip thinking blocks from prior assistant turns (client-side).
-            // context_management: clear_thinking does NOT reduce input token billing.
-            // Real Claude Code strips thinking before building the next request.
-            stripThinkingFromHistory(r);
-
-            // 2. Strip client cache_control from messages (prevents overflow — max 4 breakpoints)
-            const msgs = r.messages as Array<{ role: string; content: unknown }> | undefined;
-            if (msgs) {
-              for (const msg of msgs) {
-                if (Array.isArray(msg.content)) {
-                  for (const block of msg.content as Array<Record<string, unknown>>) {
-                    delete block.cache_control;
-                  }
-                }
-              }
-            }
-
-            // 3. Rewrite tool names to CC equivalents (Anthropic fingerprints on tool names)
-            toolMappings = rewriteToolNames(r);
-
-            // 3. Scrub non-CC fields and normalize field ordering
-            const reordered = scrubAndReorderFields(r);
-            for (const key of Object.keys(r)) delete r[key];
-            Object.assign(r, reordered);
-
-            // 3. Inject device identity metadata for session tracking
-            if (identity.deviceId) {
-              r.metadata = {
-                user_id: JSON.stringify({
-                  device_id: identity.deviceId,
-                  account_uuid: identity.accountUuid,
-                  session_id: SESSION_ID,
-                }),
-              };
-            }
-
-            // 4. Model-aware defaults matching Claude Code behavior
-            const modelName = ((r.model as string) || '').toLowerCase();
-            const supportsThinking = !modelName.includes('haiku');
-            if (supportsThinking && !r.thinking) {
-              r.thinking = { type: 'adaptive' };
-            }
-            // Claude Code always sends max_tokens: 64000. Values above this
-            // are a fingerprint — cap to match real CC behavior.
-            if (!r.max_tokens || (r.max_tokens as number) !== 64000) {
-              r.max_tokens = 64000;
-            }
-            // Force effort to medium — CC default. Client 'high' is a fingerprint.
-            if (supportsThinking) {
-              r.output_config = { effort: 'medium' };
-            }
-            if (supportsThinking && !r.context_management) {
-              r.context_management = { edits: [{ type: 'clear_thinking_20251015', keep: 'all' }] };
-            }
-
-            // 5. Build per-request billing tag matching Claude Code binary (Oz$ algorithm)
             const userMsg = extractFirstUserMessage(r);
             const buildTag = computeBuildTag(userMsg, cliVersion);
             const cch = computeCch();
             const fullVersion = `${cliVersion}.${buildTag}`;
             const billingTag = `x-anthropic-billing-header: cc_version=${fullVersion}; cc_entrypoint=cli; cch=${cch};`;
-
-            // 6. Normalize system prompt to exactly 3 blocks (real Claude Code always sends 3)
             const AGENT_IDENTITY = 'You are a Claude agent, built on Anthropic\'s Claude Agent SDK.';
             const CACHE_1H = { type: 'ephemeral' as const, ttl: '1h' as const };
-            r.system = normalizeSystemTo3Blocks(r.system, billingTag, AGENT_IDENTITY, CACHE_1H);
+
+            const { body: ccBody, toolMap } = buildCCRequest(
+              r, billingTag, AGENT_IDENTITY, CACHE_1H,
+              { deviceId: identity.deviceId, accountUuid: identity.accountUuid, sessionId: SESSION_ID },
+            );
+
+            // Store tool map for response reverse-mapping
+            ccToolMap = toolMap;
+
+            // Replace request body entirely with CC template
+            for (const key of Object.keys(r)) delete r[key];
+            Object.assign(r, ccBody);
           }
           finalBody = Buffer.from(JSON.stringify(r));
         } catch { /* not JSON, send as-is */ }
@@ -1115,9 +1073,9 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<void> {
               }
             } else {
               // Reverse tool names in streaming chunks
-              if (toolMappings.length > 0) {
+              if (ccToolMap && ccToolMap.size > 0) {
                 const text = new TextDecoder().decode(value);
-                res.write(reverseToolNames(text, toolMappings));
+                res.write(reverseMapResponse(text, ccToolMap));
               } else {
                 res.write(value);
               }
@@ -1137,7 +1095,7 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<void> {
         let responseBody = await upstream.text();
 
         // Reverse tool name mapping so client sees original names
-        responseBody = reverseToolNames(responseBody, toolMappings);
+        if (ccToolMap) responseBody = reverseMapResponse(responseBody, ccToolMap);
 
         if (isOpenAI && upstream.status >= 200 && upstream.status < 300) {
           try {
