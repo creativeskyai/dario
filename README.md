@@ -33,7 +33,7 @@ export ANTHROPIC_BASE_URL=http://localhost:3456   # or OPENAI_BASE_URL=http://lo
 export ANTHROPIC_API_KEY=dario                    # or OPENAI_API_KEY=dario
 ```
 
-Opus, Sonnet, Haiku — all models, streaming, tool use. **Zero dependencies.** ~1,600 lines of TypeScript. Works with Cursor, Continue, Aider, LiteLLM, Hermes, OpenClaw, or any tool that speaks the Anthropic or OpenAI API. When rate limited, `--cli` routes through Claude Code for uninterrupted Opus access.
+Opus, Sonnet, Haiku — all models, streaming, tool use. **Zero dependencies.** ~1,900 lines of TypeScript. Works with Cursor, Continue, Aider, LiteLLM, Hermes, OpenClaw, or any tool that speaks the Anthropic or OpenAI API. When rate limited, `--cli` routes through Claude Code for uninterrupted Opus access.
 
 <table>
 <tr>
@@ -103,7 +103,7 @@ dario is the only proxy that solves this. It injects native Claude Code device i
 | OpenAI API compat | **Yes** | Yes | Yes |
 | Orchestration sanitization | **Yes** | Yes | No |
 | Token anomaly detection | **Yes** | Yes | No |
-| Codebase size | ~1,600 lines | ~9,000 lines | Platform |
+| Codebase size | ~1,900 lines | ~9,000 lines | Platform |
 | Dependencies | 0 | Many | Many |
 | Setup | 2 commands | Config + build | Config + dashboard |
 
@@ -582,7 +582,7 @@ Dario handles your OAuth tokens. Here's why you can trust it:
 
 | Signal | Status |
 |--------|--------|
-| **Source code** | ~1,600 lines of TypeScript — small enough to audit in one sitting |
+| **Source code** | ~1,900 lines of TypeScript — small enough to audit in one sitting |
 | **Dependencies** | 0 runtime dependencies. Verify: `npm ls --production` |
 | **npm provenance** | Every release is [SLSA attested](https://www.npmjs.com/package/@askalf/dario) via GitHub Actions |
 | **Security scanning** | [CodeQL](https://github.com/askalf/dario/actions/workflows/codeql.yml) runs on every push and weekly |
@@ -614,7 +614,7 @@ cd $(npm root -g)/@askalf/dario && npm ls --production
 
 ## Contributing
 
-PRs welcome. The codebase is ~1,800 lines of TypeScript across 5 files:
+PRs welcome. The codebase is ~1,900 lines of TypeScript across 5 files:
 
 | File | Purpose |
 |------|---------|
