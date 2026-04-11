@@ -51,7 +51,7 @@ Opus, Sonnet, Haiku — all models, streaming, tool use. **Zero dependencies.** 
 
 **Copilot** (Microsoft)
 
-*"Verdict: Safe for local use — well-implemented with strong security practices. Minimal attack surface: 1 production dependency, PKCE OAuth, localhost-only binding, timing-safe auth, zero telemetry. The main risk vector is operator error rather than code defects."*
+*"Verdict: Safe for local use — well-implemented with strong security practices. Minimal attack surface: zero runtime dependencies, PKCE OAuth, localhost-only binding, timing-safe auth, zero telemetry. The main risk vector is operator error rather than code defects."*
 
 </td>
 <td width="33%" valign="top">
