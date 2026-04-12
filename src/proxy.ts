@@ -700,6 +700,7 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<void> {
       // Parse body once, apply OpenAI translation, model override, and sanitization
       let finalBody: Buffer | undefined = body.length > 0 ? body : undefined;
       let ccToolMap: Map<string, { ccTool: string }> | null = null;
+      let requestModel = '';
       if (body.length > 0) {
         try {
           const parsed = JSON.parse(body.toString()) as Record<string, unknown>;
@@ -707,6 +708,7 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<void> {
           sanitizeMessages(parsed);
           const result = isOpenAI ? openaiToAnthropic(parsed, modelOverride) : (modelOverride ? { ...parsed, model: modelOverride } : parsed);
           const r = result as Record<string, unknown>;
+          requestModel = (r.model as string || '').toLowerCase();
           // In passthrough mode, skip all Claude-specific injection — OAuth swap only
           if (!passthrough) {
             // ── Template replay: replace the entire request with a CC template ──
@@ -750,11 +752,12 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<void> {
         beta = 'oauth-2025-04-20';
         if (clientBeta) beta += ',' + clientBeta;
       } else {
-        // Claude-optimized: full beta set matching real Claude Code (exact order from MITM capture)
-        // Exact beta set from CC v2.1.104 MITM capture (exact order)
-        // Only 8 betas — CC sends more conditionally (fast-mode, web-search, etc.)
-        // but the base set for a standard request is exactly this
-        beta = 'claude-code-20250219,oauth-2025-04-20,context-1m-2025-08-07,interleaved-thinking-2025-05-14,context-management-2025-06-27,prompt-caching-scope-2026-01-05,advisor-tool-2026-03-01,effort-2025-11-24';
+        // CC v2.1.104 beta set — context-1m only for Sonnet 4.6 (CC gates it via feature flag)
+        const baseBetas = 'claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,context-management-2025-06-27,prompt-caching-scope-2026-01-05,advisor-tool-2026-03-01,effort-2025-11-24';
+        const isSonnet46 = requestModel.includes('sonnet-4-6') || requestModel.includes('sonnet46');
+        beta = isSonnet46
+          ? 'claude-code-20250219,oauth-2025-04-20,context-1m-2025-08-07,interleaved-thinking-2025-05-14,context-management-2025-06-27,prompt-caching-scope-2026-01-05,advisor-tool-2026-03-01,effort-2025-11-24'
+          : baseBetas;
         if (clientBeta) {
           const baseSet = new Set(beta.split(','));
           const filtered = filterBillableBetas(clientBeta)
