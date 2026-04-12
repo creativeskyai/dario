@@ -752,8 +752,10 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<void> {
         if (clientBeta) beta += ',' + clientBeta;
       } else {
         // Claude-optimized: full beta set matching real Claude Code (exact order from MITM capture)
-        // Beta set from CC v2.1.104 binary RE — some are CC-internal/gated, only include publicly accepted ones
-        beta = 'claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,fine-grained-tool-streaming-2025-05-14,context-management-2025-06-27,prompt-caching-scope-2026-01-05,advisor-tool-2026-03-01,effort-2025-11-24,fast-mode-2026-02-01,redact-thinking-2026-02-12,context-1m-2025-08-07,web-search-2025-03-05,advanced-tool-use-2025-11-20,tool-search-tool-2025-10-19';
+        // Exact beta set from CC v2.1.104 MITM capture (exact order)
+        // Only 8 betas — CC sends more conditionally (fast-mode, web-search, etc.)
+        // but the base set for a standard request is exactly this
+        beta = 'claude-code-20250219,oauth-2025-04-20,context-1m-2025-08-07,interleaved-thinking-2025-05-14,context-management-2025-06-27,prompt-caching-scope-2026-01-05,advisor-tool-2026-03-01,effort-2025-11-24';
         if (clientBeta) {
           const baseSet = new Set(beta.split(','));
           const filtered = filterBillableBetas(clientBeta)

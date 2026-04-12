@@ -333,6 +333,8 @@ export function buildCCRequest(
   }
 
   // ── Build the CC request from template ──
+  // Key order matches CC v2.1.104 MITM capture exactly:
+  // model, messages, system, tools, metadata, max_tokens, thinking, context_management, output_config, stream
   const ccRequest: Record<string, unknown> = {
     model,
     messages,
@@ -341,19 +343,14 @@ export function buildCCRequest(
       { type: 'text', text: agentIdentity, cache_control: cache1h },
       { type: 'text', text: systemText || 'You are a helpful assistant.', cache_control: cache1h },
     ],
-    max_tokens: 64000,
   };
 
-  // Model-specific fields (matches CC v2.1.104 exactly)
-  if (!isHaiku) {
-    ccRequest.thinking = { type: 'adaptive' };
-    ccRequest.output_config = { effort: 'medium' };
-    ccRequest.context_management = { edits: [{ type: 'clear_thinking_20251015', keep: 'all' }] };
-    // CC sends temperature:1 explicitly when not in thinking-only mode
-    ccRequest.temperature = 1;
+  // Tools come before metadata in CC's key order
+  if (clientTools && clientTools.length > 0) {
+    ccRequest.tools = CC_TOOL_DEFINITIONS;
   }
 
-  // Always include metadata
+  // Metadata
   ccRequest.metadata = {
     user_id: JSON.stringify({
       device_id: identity.deviceId,
@@ -362,12 +359,16 @@ export function buildCCRequest(
     }),
   };
 
-  ccRequest.stream = stream;
+  ccRequest.max_tokens = 64000;
 
-  // Use CC's exact tool definitions — not the client's
-  if (clientTools && clientTools.length > 0) {
-    ccRequest.tools = CC_TOOL_DEFINITIONS;
+  // Model-specific fields — order: thinking, context_management, output_config
+  if (!isHaiku) {
+    ccRequest.thinking = { type: 'adaptive' };
+    ccRequest.context_management = { edits: [{ type: 'clear_thinking_20251015', keep: 'all' }] };
+    ccRequest.output_config = { effort: 'medium' };
   }
+
+  ccRequest.stream = stream;
 
   return { body: ccRequest, toolMap: activeToolMap, unmappedTools };
 }
