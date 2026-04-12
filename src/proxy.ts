@@ -759,9 +759,12 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<void> {
         beta = 'oauth-2025-04-20';
         if (clientBeta) beta += ',' + clientBeta;
       } else {
-        // CC v2.1.104 beta set — context-1m excluded (requires Extra Usage enabled,
-        // CC only adds it via coral_reef_sonnet feature flag which most accounts don't have)
-        beta = 'claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,context-management-2025-06-27,prompt-caching-scope-2026-01-05,advisor-tool-2026-03-01,effort-2025-11-24';
+        // CC v2.1.104 base beta set. context-1m is opt-in via DARIO_EXTENDED_CONTEXT=1
+        // because it requires Extra Usage enabled on the account.
+        const baseBeta = 'claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,context-management-2025-06-27,prompt-caching-scope-2026-01-05,advisor-tool-2026-03-01,effort-2025-11-24';
+        beta = process.env.DARIO_EXTENDED_CONTEXT
+          ? `claude-code-20250219,oauth-2025-04-20,context-1m-2025-08-07,interleaved-thinking-2025-05-14,context-management-2025-06-27,prompt-caching-scope-2026-01-05,advisor-tool-2026-03-01,effort-2025-11-24`
+          : baseBeta;
         if (clientBeta) {
           const baseSet = new Set(beta.split(','));
           const filtered = filterBillableBetas(clientBeta)
