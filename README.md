@@ -19,7 +19,6 @@
 <p align="center">
   <a href="#quick-start">Quick Start</a> &bull;
   <a href="#openai-compatibility">OpenAI Compat</a> &bull;
-  <a href="#cli-backend">CLI Backend</a> &bull;
   <a href="#usage-examples">Examples</a> &bull;
   <a href="#askalf">askalf</a> &bull;
   <a href="#trust--transparency">Trust</a> &bull;
@@ -36,7 +35,7 @@ export ANTHROPIC_BASE_URL=http://localhost:3456   # or OPENAI_BASE_URL=http://lo
 export ANTHROPIC_API_KEY=dario                    # or OPENAI_API_KEY=dario
 ```
 
-Opus, Sonnet, Haiku — all models, streaming, tool use. **Zero dependencies.** ~2,000 lines of TypeScript. Works with Cursor, Continue, Aider, LiteLLM, Hermes, OpenClaw, or any tool that speaks the Anthropic or OpenAI API. When rate limited, `--cli` routes through Claude Code for uninterrupted Opus access. Auto-launches under [Bun](https://bun.sh) when available for TLS fingerprint fidelity. **Auto-detects OAuth config from your installed CC binary** so dario stays in sync forever — Anthropic can rotate client IDs and dario picks them up on the next run.
+Opus, Sonnet, Haiku — all models, streaming, tool use. **Zero dependencies.** ~2,000 lines of TypeScript. Works with Cursor, Continue, Aider, LiteLLM, Hermes, OpenClaw, or any tool that speaks the Anthropic or OpenAI API. Auto-launches under [Bun](https://bun.sh) when available for TLS fingerprint fidelity. **Auto-detects OAuth config from your installed CC binary** so dario stays in sync forever — Anthropic can rotate client IDs and dario picks them up on the next run.
 
 dario is built and maintained by [askalf](https://askalf.org) — the open-source foundation of the askalf agent platform. If you need more than a proxy, [see below](#askalf).
 
@@ -100,9 +99,8 @@ dario is the only proxy that solves this. Instead of transforming your requests 
 
 | Feature | dario | Meridian | CLIProxyAPI |
 |---------|-------|---------|------------|
-| Template replay (undetectable) | **Yes** | No | Inherited (CLI-only) |
+| Template replay (undetectable) | **Yes** | No | No |
 | Direct OAuth (streaming, tools) | **Yes** | Yes (SDK-based) | No |
-| CLI fallback (rate limit bypass) | **Yes** | No | Yes (only mode) |
 | OpenAI API compat | **Yes** | Yes | Yes |
 | Orchestration sanitization | **Yes** | Yes | No |
 | Token anomaly detection | **Yes** | Yes | No |
@@ -116,9 +114,9 @@ dario is the only proxy that solves this. Instead of transforming your requests 
 
 You pay $100-200/mo for Claude Max or Pro. But that subscription only works on claude.ai and Claude Code. If you want to use Claude with **any other tool** — Cursor, Continue, Aider, your own scripts — you need a separate API key with separate billing.
 
-**Note:** Claude subscriptions have [usage limits](https://support.claude.com/en/articles/11647753-how-do-usage-and-length-limits-work) that reset on rolling 5-hour and 7-day windows. When exceeded, Opus and Sonnet may return 429 errors while Haiku continues working. You can check your utilization via Claude Code's `/usage` command or [statusline](https://code.claude.com/docs/en/statusline). Use `--cli` mode to route through Claude Code's binary, which is not affected by these limits.
+**dario fixes this.** It creates a local proxy that translates API key auth into your subscription's OAuth tokens. Your subscription handles the billing. No API key needed.
 
-**dario fixes this.** It creates a local proxy that translates API key auth into your subscription's OAuth tokens — and with `--cli` mode, routes through the Claude Code binary for uninterrupted access.
+**Note:** Claude subscriptions have [usage limits](https://support.claude.com/en/articles/11647753-how-do-usage-and-length-limits-work) that reset on rolling 5-hour and 7-day windows. You can check your utilization via Claude Code's `/usage` command or the [statusline](https://code.claude.com/docs/en/statusline).
 
 ## Quick Start
 
@@ -183,37 +181,6 @@ continue  # in VS Code, set base URL in config
 python my_script.py
 ```
 
-## CLI Backend
-
-If you're getting rate limited on Opus or Sonnet, use `--cli` mode. This routes requests through the Claude Code binary instead of hitting the API directly. Claude Code has priority routing that continues working even when direct API calls return 429.
-
-```bash
-dario proxy --cli                    # Opus works even when rate limited
-dario proxy --cli --model=opus       # Force Opus + CLI backend
-```
-
-```
-dario — http://localhost:3456
-
-Your Claude subscription is now an API.
-
-Usage:
-  ANTHROPIC_BASE_URL=http://localhost:3456
-  ANTHROPIC_API_KEY=dario
-
-Backend: Claude CLI (bypasses rate limits)
-Model: claude-opus-4-6 (all requests)
-```
-
-**Trade-offs vs direct API mode:**
-
-| | Direct API (default) | CLI Backend (`--cli`) | Passthrough (`--passthrough`) |
-|---|---|---|---|
-| Streaming | Native SSE | SSE (converted from JSON) | Native SSE |
-| Tool use | Yes | No | Yes |
-| Template replay / billing injection | Yes | N/A | No (OAuth swap only) |
-| Rate limit bypass | Auto-fallback | Always | No |
-
 ## Passthrough Mode
 
 For tools that need exact Anthropic protocol fidelity with zero modification, use `--passthrough` (alias: `--thin`). This does OAuth swap only — no billing tag, no template replay, no device identity, no extra beta flags. Note: most tools (including Hermes and OpenClaw) work better through default mode, which handles billing classification automatically.
@@ -235,12 +202,6 @@ dario proxy                   # Passthrough (client decides)
 ```
 
 Full model IDs also work: `--model=claude-opus-4-6`
-
-Combine with `--cli` for rate-limit-proof Opus:
-
-```bash
-dario proxy --cli --model=opus
-```
 
 ## OpenAI Compatibility
 
@@ -402,18 +363,6 @@ Add to your `openclaw.json` models config:
 
 Your app sends whatever it wants — any tools, any parameters. dario replaces the entire request with Claude Code's template and injects only your conversation content. The upstream sees CC's exact tool definitions, field structure, and parameters.
 
-### CLI Backend Mode (`--cli`)
-
-```
-┌───────────┐     ┌─────────────────┐     ┌──────────────────┐
-│ Your App  │ ──> │  dario (proxy)  │ ──> │  claude --print  │
-│           │     │  localhost:3456 │     │  (Claude Code)   │
-│ sends     │     │  extracts prompt│     │                  │
-│ API       │     │  spawns CLI     │     │  has priority    │
-│ request   │     │  wraps response │     │  routing         │
-└───────────┘     └─────────────────┘     └──────────────────┘
-```
-
 ### Passthrough Mode (`--passthrough`)
 
 ```
@@ -451,7 +400,7 @@ prompt-caching-scope-2026-01-05, advisor-tool-2026-03-01, effort-2025-11-24
 
 **Session ID** — rotates per request via `x-claude-code-session-id`. A persistent session ID across many rapid requests is a behavioral detection signal; CC `--print` creates a new session each invocation.
 
-**Rate governor** — 500ms minimum between requests (configurable via `DARIO_MIN_INTERVAL_MS`). CC `--print` takes ~2-3s per call; sub-500ms cadence matches no legitimate CC usage pattern.
+**Rate governor** — 500ms minimum between requests (configurable via `DARIO_MIN_INTERVAL_MS`). Configurable for agent workloads that need tighter pacing.
 
 ### OAuth Config Auto-Detection
 
@@ -486,7 +435,6 @@ End-to-end verification lives at [`test/oauth-detector.mjs`](test/oauth-detector
 
 | Flag/Env | Description | Default |
 |----------|-------------|---------|
-| `--cli` | Use Claude CLI as backend (bypasses rate limits) | off |
 | `--passthrough` / `--thin` | Thin proxy — OAuth swap only, no injection | off |
 | `--preserve-tools` / `--keep-tools` | Keep client tool schemas instead of remapping to CC tools | off |
 | `--model=MODEL` | Force a model (`opus`, `sonnet`, `haiku`, or full ID) | passthrough |
@@ -505,11 +453,10 @@ End-to-end verification lives at [`test/oauth-detector.mjs`](test/oauth-detector
 - **`--preserve-tools` mode** — opt-out of CC tool schema replacement for agent frameworks that rely on their own custom tool definitions. Default mode still remaps for maximum detection resistance.
 - **OAuth auto-detect** — scans the installed CC binary for OAuth config at startup. Stays in sync with whatever CC version you have; falls back to known-good hardcoded values if no binary is found. Override with `DARIO_CC_PATH`.
 - **Bun auto-relaunch** — auto-detects Bun and relaunches under it for TLS fingerprint fidelity. CC runs on Bun; Node.js has a different TLS fingerprint visible at the network level.
-- **Session ID rotation** — each request gets a fresh session ID via `x-claude-code-session-id`, matching CC `--print` behavior.
-- **Rate governor** — 500ms minimum interval between requests prevents inhuman cadence. Configurable via `DARIO_MIN_INTERVAL_MS`.
+- **Session ID rotation** — each request gets a fresh session ID via `x-claude-code-session-id`, matching CC behavior.
+- **Rate governor** — configurable minimum interval between requests via `DARIO_MIN_INTERVAL_MS`.
 - **Enriched 429 errors** — rate limit errors include utilization %, limiting window, and reset time instead of Anthropic's default `"Error"` message.
 - **Auto-retry on long-context errors** — when Anthropic returns 400 or 429 with `"long context beta is not yet available"` or `"Extra usage is required"`, dario transparently retries without the `context-1m-2025-08-07` beta flag.
-- **Auto CLI fallback** — if the API returns 429 and Claude Code is installed, transparently retries through `claude --print` with SSE conversion.
 - **OpenAI-compatible** (`/v1/chat/completions`) — works with any OpenAI SDK or tool.
 - Streaming and non-streaming (both Anthropic and OpenAI SSE formats, including tool_use streaming).
 - Tool use / function calling.
@@ -521,13 +468,6 @@ End-to-end verification lives at [`test/oauth-detector.mjs`](test/oauth-detector
 - **Token anomaly detection** — warns on context spike (>60% input growth) or output explosion (>2x previous).
 - Concurrency control (max 10 concurrent upstream requests).
 - CORS enabled (works from browser apps on localhost).
-
-### CLI Backend Mode
-- All Claude models — including Opus when rate limited.
-- Streaming via SSE conversion (client sends `stream: true`, CLI JSON response is converted to Anthropic or OpenAI SSE events).
-- OpenAI compatibility (translates OpenAI → Anthropic before CLI, Anthropic → OpenAI after).
-- System prompts and multi-turn conversations (via context injection).
-- Not affected by API rate limits.
 
 ### Passthrough Mode
 - All Claude models with native streaming and tool use.
@@ -604,7 +544,7 @@ dario will always be open-source and free. askalf is the hosted tier for teams w
 ## FAQ
 
 **Does this violate Anthropic's terms of service?**
-Dario uses your existing Claude Code credentials with the same OAuth tokens. It authenticates you as you, with your subscription, through Anthropic's official API. The `--cli` mode literally uses Claude Code itself as the backend.
+Dario uses your existing Claude Code credentials with the same OAuth tokens. It authenticates you as you, with your subscription, through Anthropic's official API.
 
 **What subscription plans work?**
 Claude Max and Claude Pro. Any plan that lets you use Claude Code.
@@ -613,7 +553,7 @@ Claude Max and Claude Pro. Any plan that lets you use Claude Code.
 Should work if your plan includes Claude Code access. Not tested yet — please open an issue with results.
 
 **Do I need Claude Code installed?**
-Recommended but not required. If Claude Code is installed and logged in, `dario login` picks up your credentials automatically. Without Claude Code, dario runs its own OAuth flow to authenticate directly. Note: `--cli` mode requires Claude Code (`npm install -g @anthropic-ai/claude-code`).
+Recommended but not required. If Claude Code is installed and logged in, `dario login` picks up your credentials automatically. Without Claude Code, dario runs its own OAuth flow to authenticate directly.
 
 **First time setup — account priming**
 If dario is the first thing you use with a new Claude account, run a few real Claude Code commands first to establish a session baseline:
@@ -633,13 +573,13 @@ Dario auto-refreshes tokens 30 minutes before expiry. You should never see an au
 **What happens when Anthropic rotates the OAuth client_id or URL?**
 Dario auto-detects OAuth config from your installed Claude Code binary. When CC ships a new version with rotated values, dario picks them up on the next startup — no dario release needed. The detector is cached at `~/.dario/cc-oauth-cache.json` and only re-scans when the binary fingerprint changes. If CC isn't installed, dario falls back to known-good hardcoded values.
 
-**I'm getting rate limited on Opus. What do I do?**
-Use `--cli` mode: `dario proxy --cli`. This routes through the Claude Code binary, which continues working when direct API calls are rate limited. In default mode, dario automatically falls back to CLI when it detects a 429 (if Claude Code is installed). Rate limit errors include utilization percentages and reset times so you can see exactly when capacity returns.
+**I'm hitting rate limits. What do I do?**
+Claude subscriptions have rolling 5-hour and 7-day usage windows. Check your utilization with Claude Code's `/usage` command or the [statusline](https://code.claude.com/docs/en/statusline). Rate limit errors from dario include utilization percentages and reset times so you can see exactly when capacity returns.
 
-If you're running a multi-agent workload and consistently hitting limits, [askalf](https://askalf.org) distributes load across multiple accounts and handles rotation automatically.
+If you're running a multi-agent workload and consistently hitting limits, [askalf](https://askalf.org) distributes load across multiple accounts automatically.
 
 **What are the usage limits?**
-Claude subscriptions have rolling 5-hour and 7-day usage windows shared across claude.ai and Claude Code. See [Anthropic's docs](https://support.claude.com/en/articles/11647753-how-do-usage-and-length-limits-work) for details. In Claude Code, use `/usage` to check your current limits, or configure the [statusline](https://code.claude.com/docs/en/statusline) to show real-time utilization.
+Claude subscriptions have rolling 5-hour and 7-day usage windows shared across claude.ai and Claude Code. See [Anthropic's docs](https://support.claude.com/en/articles/11647753-how-do-usage-and-length-limits-work) for details.
 
 **Can I run this on a server?**
 Dario binds to localhost by default. For server use, handle the initial login on a machine with a browser, then copy `~/.claude/.credentials.json` (or `~/.dario/credentials.json`) to your server. Auto-refresh will keep it alive from there.
@@ -656,9 +596,6 @@ import { startProxy, getAccessToken, getStatus } from "@askalf/dario";
 
 // Start the proxy programmatically
 await startProxy({ port: 3456, verbose: true });
-
-// CLI backend mode
-await startProxy({ port: 3456, cliBackend: true, model: "opus" });
 
 // Passthrough mode (OAuth swap only, no injection)
 await startProxy({ port: 3456, passthrough: true });
@@ -716,7 +653,7 @@ PRs welcome. The codebase is ~2,000 lines of TypeScript across 6 source files:
 
 | File | Purpose |
 |------|---------|
-| `src/proxy.ts` | HTTP proxy server, CLI backend, rate governor, billing tag, response forwarding |
+| `src/proxy.ts` | HTTP proxy server, rate governor, billing tag, response forwarding |
 | `src/cc-template.ts` | CC template engine, tool mapping, orchestration sanitization |
 | `src/cc-template-data.json` | MITM-extracted CC data (25 tools, 25KB system prompt) |
 | `src/cc-oauth-detect.ts` | Binary scanner — auto-detect OAuth config from installed CC binary |
@@ -736,7 +673,7 @@ npm run dev   # runs with tsx (no build needed)
 | Who | Contributions |
 |-----|---------------|
 | [@GodsBoy](https://github.com/GodsBoy) | Proxy authentication, token redaction, error sanitization ([#2](https://github.com/askalf/dario/pull/2)) |
-| [@belangertrading](https://github.com/belangertrading) | Billing classification investigation ([#4](https://github.com/askalf/dario/issues/4)), Opus/Sonnet 429 diagnosis + CLI fallback workaround ([#6](https://github.com/askalf/dario/issues/6)), billing reclassification root cause ([#7](https://github.com/askalf/dario/issues/7)) |
+| [@belangertrading](https://github.com/belangertrading) | Billing classification investigation ([#4](https://github.com/askalf/dario/issues/4)), billing reclassification root cause ([#7](https://github.com/askalf/dario/issues/7)) |
 
 ## License
 
