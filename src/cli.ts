@@ -133,13 +133,12 @@ async function proxy() {
     process.exit(1);
   }
   const verbose = args.includes('--verbose') || args.includes('-v');
-  const cliBackend = args.includes('--cli');
   const passthrough = args.includes('--passthrough') || args.includes('--thin');
   const preserveTools = args.includes('--preserve-tools') || args.includes('--keep-tools');
   const modelArg = args.find(a => a.startsWith('--model='));
   const model = modelArg ? modelArg.split('=')[1] : undefined;
 
-  await startProxy({ port, verbose, model, cliBackend, passthrough, preserveTools });
+  await startProxy({ port, verbose, model, passthrough, preserveTools });
 }
 
 async function help() {
@@ -158,15 +157,14 @@ async function help() {
                              Shortcuts: opus, sonnet, haiku
                              Full IDs: claude-opus-4-6, claude-sonnet-4-6
                              Default: passthrough (client decides)
-    --cli                    Use Claude CLI as backend (bypasses rate limits)
-    --passthrough            Thin proxy — OAuth swap only, no injection
+    --passthrough, --thin    Thin proxy — OAuth swap only, no injection
     --preserve-tools         Keep client tool schemas (for agents with custom tools)
     --port=PORT              Port to listen on (default: 3456)
     --verbose, -v            Log all requests
 
   Quick start:
     dario login              # auto-detects Claude Code credentials
-    dario proxy              # or: dario proxy --cli --model=opus
+    dario proxy --model=opus # or: dario proxy --passthrough
 
   Then point any Anthropic SDK at http://localhost:3456:
     export ANTHROPIC_BASE_URL=http://localhost:3456

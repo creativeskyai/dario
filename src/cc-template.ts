@@ -1,9 +1,9 @@
 /**
- * Claude Code request template — auto-extracted from CC v2.1.104 MITM capture.
+ * Claude Code request template.
  *
  * Tool definitions, system prompt, and request structure are loaded from
- * cc-template-data.json (extracted via MITM proxy from real CC session).
- * This ensures byte-level fidelity with real CC requests.
+ * cc-template-data.json and sent verbatim — this gives byte-level fidelity
+ * with the shape of a real Claude Code request.
  */
 
 import { readFileSync } from 'node:fs';
@@ -25,7 +25,7 @@ const TEMPLATE: TemplateData = JSON.parse(
   readFileSync(join(__dirname, 'cc-template-data.json'), 'utf-8'),
 );
 
-/** CC's exact tool definitions — loaded from MITM capture. */
+/** CC's exact tool definitions — loaded from the template JSON. */
 export const CC_TOOL_DEFINITIONS = TEMPLATE.tools;
 
 /** CC's static system prompt (~25KB). */
@@ -220,7 +220,7 @@ export function buildCCRequest(
   }
 
   // ── Build the CC request from template ──
-  // Key order matches CC v2.1.104 MITM capture exactly:
+  // Key order matches CC v2.1.104 exactly:
   // model, messages, system, tools, metadata, max_tokens, thinking, context_management, output_config, stream
   //
   // System prompt structure (3 blocks, matching real CC):

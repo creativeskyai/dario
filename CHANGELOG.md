@@ -6,6 +6,16 @@ All notable changes to this project will be documented in this file.
 
 ### Removed
 - `--cli` / CLI backend mode — Removed. Routing requests through `claude --print` proved unreliable in practice: no tool use support, streaming conversion artifacts, and context handling that diverged from real API behavior in multi-turn conversations. Direct API mode with template replay is the only path that works consistently.
+- **Dead helper functions** — `jsonToSse`, `jsonToOpenaiSse`, `sendCliResponse`, `handleViaCli`, and the CLI auto-fallback branch in the 429 handler. All only reachable through the removed `--cli` mode. ~300 lines of unreachable code.
+- **Unused imports** — `spawn`, `writeFileSync`, `unlinkSync`, `tmpdir` (all were CLI-only).
+- **Obsolete orchestration tag names** — Removed `tool_exec`, `tool_output`, `skill_content`, `skill_files`, `available_skills` from the tag stripper. These never appeared in real client requests and were carryover from an earlier draft of the sanitization pass.
+- **Internal code references in comments** — Stripped references to Claude Code's minified internal function/constant names. Those were useful as working notes during the reverse-engineering pass; nothing to do with what dario does at runtime.
+
+### Changed
+- **`proxy.ts` shrank from 1,102 → 837 lines** (~24% smaller) after dead code removal.
+- **`detectCli()` → `detectCliVersion()`** — Function now only exists to grab the installed CC version for the per-request build-tag computation. The old name implied a broader "detect CLI availability" role that no longer exists.
+- **Rate governor comment** — Rewritten to describe *what* the limit does, not *why* a specific subprocess invocation pattern motivated it.
+- **Mode line on proxy startup** — Simplified to 2 states (passthrough vs. OAuth) instead of 3.
 
 ## [3.4.0] - 2026-04-12
 

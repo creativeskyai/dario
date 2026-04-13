@@ -1,9 +1,9 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { randomUUID, randomBytes, timingSafeEqual, createHash } from 'node:crypto';
-import { execSync, spawn } from 'node:child_process';
-import { readFileSync, readdirSync, writeFileSync, unlinkSync } from 'node:fs';
+import { execSync } from 'node:child_process';
+import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { homedir, tmpdir } from 'node:os';
+import { homedir } from 'node:os';
 import { arch, platform } from 'node:process';
 import { getAccessToken, getStatus } from './oauth.js';
 import { buildCCRequest, reverseMapResponse } from './cc-template.js';
@@ -32,62 +32,29 @@ class Semaphore {
   }
 }
 
-// Billing tag hash seed — extracted from Claude Code binary (constant XGA)
+// Billing tag hash seed — matches Claude Code's value
 const BILLING_SEED = '59cf53e54c78';
 
-// Compute per-request build tag matching Claude Code's Oz$ algorithm:
+// Compute per-request build tag:
 // SHA-256(seed + chars[4,7,20] of user message + version).slice(0,3)
 function computeBuildTag(userMessage: string, version: string): string {
   const chars = [4, 7, 20].map(i => userMessage[i] || '0').join('');
   return createHash('sha256').update(`${BILLING_SEED}${chars}${version}`).digest('hex').slice(0, 3);
 }
 
-// Per-request cch: real Claude Code generates a random 5-char hex value each request.
-// Confirmed via MITM: 10 identical requests → 10 unique cch values, no deterministic pattern.
+// Per-request cch: random 5-char hex value each request (Claude Code does the same).
 function computeCch(): string {
   return randomBytes(3).toString('hex').slice(0, 5);
 }
 
-// Detect installed Claude Code binary at startup (single exec for both version + availability)
-let cliAvailable = false;
-function detectCli(): string {
+// Detect installed Claude Code version for the build-tag computation.
+// Falls back to a known-good version if claude isn't on PATH.
+function detectCliVersion(): string {
   try {
     const out = execSync('claude --version', { timeout: 5000, stdio: 'pipe' }).toString().trim();
-    cliAvailable = true;
-    // Capture major version (e.g., 2.1.100) — build tag is computed per-request
     return out.match(/^([\d]+\.[\d]+\.[\d]+)/)?.[1] ?? '2.1.100';
   } catch {
-    cliAvailable = false;
     return '2.1.100';
-  }
-}
-
-/** Convert a non-streaming Messages API response to SSE event stream. */
-function jsonToSse(jsonBody: string): string {
-  try {
-    const msg = JSON.parse(jsonBody) as Record<string, unknown>;
-    const events: string[] = [];
-    // message_start
-    events.push(`event: message_start\ndata: ${JSON.stringify({ type: 'message_start', message: { ...msg, content: [], stop_reason: null } })}\n\n`);
-    // content blocks
-    const content = msg.content as Array<{ type: string; text?: string; thinking?: string }> | undefined;
-    if (content) {
-      for (let i = 0; i < content.length; i++) {
-        const block = content[i];
-        events.push(`event: content_block_start\ndata: ${JSON.stringify({ type: 'content_block_start', index: i, content_block: { type: block.type, ...(block.type === 'text' ? { text: '' } : { thinking: '' }) } })}\n\n`);
-        if (block.type === 'text' && block.text) {
-          events.push(`event: content_block_delta\ndata: ${JSON.stringify({ type: 'content_block_delta', index: i, delta: { type: 'text_delta', text: block.text } })}\n\n`);
-        } else if (block.type === 'thinking' && block.thinking) {
-          events.push(`event: content_block_delta\ndata: ${JSON.stringify({ type: 'content_block_delta', index: i, delta: { type: 'thinking_delta', thinking: block.thinking } })}\n\n`);
-        }
-        events.push(`event: content_block_stop\ndata: ${JSON.stringify({ type: 'content_block_stop', index: i })}\n\n`);
-      }
-    }
-    // message_stop
-    events.push(`event: message_stop\ndata: ${JSON.stringify({ type: 'message_stop' })}\n\n`);
-    return events.join('');
-  } catch {
-    return '';
   }
 }
 
@@ -105,47 +72,8 @@ function extractFirstUserMessage(body: Record<string, unknown>): string {
   return '';
 }
 
-/** Convert CLI JSON response to OpenAI SSE format. */
-function jsonToOpenaiSse(jsonBody: string): string {
-  try {
-    const parsed = JSON.parse(jsonBody) as Record<string, unknown>;
-    const text = (parsed.content as Array<{ type: string; text?: string }> | undefined)?.find(c => c.type === 'text')?.text ?? '';
-    const ts = Math.floor(Date.now() / 1000);
-    return `data: ${JSON.stringify({ id: 'chatcmpl-dario', object: 'chat.completion.chunk', created: ts, model: 'claude', choices: [{ index: 0, delta: { content: text }, finish_reason: null }] })}\n\n` +
-      `data: ${JSON.stringify({ id: 'chatcmpl-dario', object: 'chat.completion.chunk', created: ts, model: 'claude', choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n`;
-  } catch { return ''; }
-}
-
-/** Send a CLI result to the client, handling streaming/format translation. */
-function sendCliResponse(
-  res: ServerResponse,
-  cliResult: { status: number; body: string; contentType: string },
-  clientWantsStream: boolean,
-  isOpenAI: boolean,
-  corsOrigin: string,
-  securityHeaders: Record<string, string>,
-): void {
-  const headers = { 'Access-Control-Allow-Origin': corsOrigin, ...securityHeaders };
-  const ok = cliResult.status >= 200 && cliResult.status < 300;
-
-  if (ok && clientWantsStream) {
-    const sseData = isOpenAI ? jsonToOpenaiSse(cliResult.body) : jsonToSse(cliResult.body);
-    if (sseData) {
-      res.writeHead(200, { 'Content-Type': 'text/event-stream', ...headers });
-      res.end(sseData);
-      return;
-    }
-  }
-
-  if (ok && isOpenAI) {
-    try { cliResult.body = JSON.stringify(anthropicToOpenai(JSON.parse(cliResult.body) as Record<string, unknown>)); } catch {}
-  }
-  res.writeHead(cliResult.status, { 'Content-Type': cliResult.contentType, ...headers });
-  res.end(cliResult.body);
-}
-
-// Session ID rotates per request — each CC --print invocation creates a new session.
-// A persistent session ID across many requests is a detection signal.
+// Session ID rotates per request — fresh UUID per invocation.
+// A persistent session ID across many requests is a behavioral fingerprint.
 let SESSION_ID = randomUUID();
 const OS_NAME = platform === 'win32' ? 'Windows' : platform === 'darwin' ? 'MacOS' : 'Linux';
 
@@ -211,8 +139,7 @@ function filterBillableBetas(betas: string): string {
 const ORCHESTRATION_TAG_NAMES = [
   'system-reminder', 'env', 'system_information', 'current_working_directory',
   'operating_system', 'default_shell', 'home_directory', 'task_metadata',
-  'tool_exec', 'tool_output', 'skill_content', 'skill_files',
-  'directories', 'available_skills', 'thinking',
+  'directories', 'thinking',
 ];
 const ORCHESTRATION_PATTERNS = ORCHESTRATION_TAG_NAMES.flatMap(tag => [
   new RegExp(`<${tag}\\b[^>]*>[\\s\\S]*?<\\/${tag}>`, 'gi'),
@@ -349,7 +276,6 @@ interface ProxyOptions {
   port?: number;
   verbose?: boolean;
   model?: string;  // Override model in all requests
-  cliBackend?: boolean;  // Use claude CLI as backend instead of direct API
   passthrough?: boolean;  // Thin proxy — OAuth swap only, no injection
   preserveTools?: boolean;  // Keep client tool schemas (for agents with custom tools)
 }
@@ -392,138 +318,6 @@ function enrich429(body: string, headers: Headers): string {
   }
 }
 
-/**
- * CLI Backend: route requests through `claude --print` instead of direct API.
- * This bypasses rate limiting because Claude Code's binary has priority routing.
- */
-async function handleViaCli(
-  body: Buffer,
-  model: string | null,
-  verbose: boolean,
-): Promise<{ status: number; body: string; contentType: string }> {
-  try {
-    const parsed = JSON.parse(body.toString()) as {
-      messages?: Array<{ role: string; content: unknown }>;
-      model?: string;
-      max_tokens?: number;
-      system?: string | Array<{ type?: string; text?: string }>;
-      stream?: boolean;
-    };
-
-    // Extract the last user message as the prompt
-    const messages = parsed.messages ?? [];
-    const lastUser = [...messages].reverse().find(m => m.role === 'user');
-    if (!lastUser) {
-      return { status: 400, body: JSON.stringify({ error: 'No user message' }), contentType: 'application/json' };
-    }
-
-    const rawModel = model ?? parsed.model ?? 'claude-opus-4-6';
-    // Validate model name — only allow alphanumeric, hyphens, dots, underscores
-    const effectiveModel = /^[a-zA-Z0-9._-]+$/.test(rawModel) ? rawModel : 'claude-opus-4-6';
-    const prompt = typeof lastUser.content === 'string'
-      ? lastUser.content
-      : JSON.stringify(lastUser.content);
-
-    // Build claude --print command
-    const args = ['--print', '--model', effectiveModel];
-
-    // Flatten system prompt — API accepts string or array of content blocks,
-    // but claude --print only accepts a string
-    let systemPrompt = '';
-    if (typeof parsed.system === 'string') {
-      systemPrompt = parsed.system;
-    } else if (Array.isArray(parsed.system)) {
-      systemPrompt = parsed.system
-        .filter(b => b.text)
-        .map(b => b.text)
-        .join('\n\n');
-    }
-    // Include conversation history as context
-    const history = messages.slice(0, -1);
-    if (history.length > 0) {
-      const historyText = history.map(m => `${m.role}: ${typeof m.content === 'string' ? m.content : JSON.stringify(m.content)}`).join('\n');
-      systemPrompt = systemPrompt ? `${systemPrompt}\n\nConversation history:\n${historyText}` : `Conversation history:\n${historyText}`;
-    }
-
-    // Write system prompt to temp file instead of passing as arg to avoid E2BIG
-    // on large conversation contexts (OS arg size limit ~2MB)
-    let systemPromptFile: string | null = null;
-    if (systemPrompt) {
-      systemPromptFile = join(tmpdir(), `dario-sysprompt-${randomUUID()}.txt`);
-      writeFileSync(systemPromptFile, systemPrompt, { mode: 0o600 });
-      args.push('--append-system-prompt-file', systemPromptFile);
-    }
-
-    if (verbose) {
-      console.log(`[dario:cli] model=${effectiveModel} prompt=${prompt.substring(0, 60)}...`);
-    }
-
-    // Spawn claude --print
-    return new Promise((resolve) => {
-      // Cleanup temp file when done
-      const cleanup = () => { if (systemPromptFile) try { unlinkSync(systemPromptFile); } catch {} };
-
-      const child = spawn('claude', args, {
-        stdio: ['pipe', 'pipe', 'pipe'],
-        timeout: 300_000,
-      });
-
-      let stdout = '';
-      let stderr = '';
-      const MAX_CLI_OUTPUT = 5_000_000; // 5MB cap per stream — prevents OOM from runaway CLI
-      child.stdout.on('data', (d: Buffer) => { if (stdout.length < MAX_CLI_OUTPUT) stdout += d.toString(); });
-      child.stderr.on('data', (d: Buffer) => { if (stderr.length < MAX_CLI_OUTPUT) stderr += d.toString(); });
-
-      child.stdin.write(prompt);
-      child.stdin.end();
-
-      child.on('close', (code) => {
-        cleanup();
-        if (code !== 0 || !stdout.trim()) {
-          resolve({
-            status: 502,
-            body: JSON.stringify({ type: 'error', error: { type: 'api_error', message: sanitizeError(stderr.substring(0, 200)) || 'CLI backend failed' } }),
-            contentType: 'application/json',
-          });
-          return;
-        }
-
-        // Build a proper Messages API response
-        const text = stdout.trim();
-        const estimatedTokens = Math.ceil(text.length / 4);
-        const response = {
-          id: `msg_${randomUUID().replace(/-/g, '').substring(0, 24)}`,
-          type: 'message',
-          role: 'assistant',
-          model: effectiveModel,
-          content: [{ type: 'text', text }],
-          stop_reason: 'end_turn',
-          stop_sequence: null,
-          usage: {
-            input_tokens: Math.ceil(prompt.length / 4),
-            output_tokens: estimatedTokens,
-          },
-        };
-        resolve({ status: 200, body: JSON.stringify(response), contentType: 'application/json' });
-      });
-
-      child.on('error', (err) => {
-        cleanup();
-        resolve({
-          status: 502,
-          body: JSON.stringify({ type: 'error', error: { type: 'api_error', message: 'Claude CLI not found. Install Claude Code first.' } }),
-          contentType: 'application/json',
-        });
-      });
-    });
-  } catch (err) {
-    return {
-      status: 400,
-      body: JSON.stringify({ type: 'error', error: { type: 'invalid_request_error', message: 'Invalid request body' } }),
-      contentType: 'application/json',
-    };
-  }
-}
 
 export async function startProxy(opts: ProxyOptions = {}): Promise<void> {
   const port = opts.port ?? DEFAULT_PORT;
@@ -537,7 +331,7 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<void> {
     process.exit(1);
   }
 
-  const cliVersion = detectCli();
+  const cliVersion = detectCliVersion();
   const modelOverride = opts.model ? (MODEL_ALIASES[opts.model] ?? opts.model) : null;
   const identity = loadClaudeIdentity();
   if (identity.deviceId) {
@@ -547,7 +341,7 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<void> {
     console.warn('[dario] Run Claude Code at least once to generate ~/.claude/.claude.json');
   }
 
-  // Pre-build static headers (matches real Claude Code captured via MITM)
+  // Pre-build static headers — matches the set a real Claude Code client sends.
   const staticHeaders: Record<string, string> = passthrough ? {
     'accept': 'application/json',
     'Content-Type': 'application/json',
@@ -566,13 +360,11 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<void> {
     // Claude Code runs on Bun which reports v24.3.0 as Node compat version
     'x-stainless-runtime-version': 'v24.3.0',
   };
-  const useCli = opts.cliBackend ?? false;
   let requestCount = 0;
   const semaphore = new Semaphore(MAX_CONCURRENT);
 
-  // Rate governor: CC --print takes ~2-3s per invocation.
-  // Rapid-fire requests from one "session" is an inhuman pattern.
-  // Minimum 500ms between requests — fast enough for agents, slow enough to not flag.
+  // Rate governor — minimum 500ms between requests. Fast enough for agents,
+  // slow enough to not look like a scripted flood of identical traffic.
   let lastRequestTime = 0;
   const MIN_REQUEST_INTERVAL_MS = parseInt(process.env.DARIO_MIN_INTERVAL_MS || '500', 10);
 
@@ -682,29 +474,6 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<void> {
       }
       const body = Buffer.concat(chunks);
 
-      // CLI backend mode: route through claude --print (works for both Anthropic and OpenAI endpoints)
-      if (useCli && req.method === 'POST' && body.length > 0) {
-        let cliBody = body;
-        let clientWantsStream = false;
-        // Translate OpenAI format before passing to CLI
-        if (isOpenAI) {
-          try {
-            const parsed = JSON.parse(body.toString()) as Record<string, unknown>;
-            clientWantsStream = !!parsed.stream;
-            cliBody = Buffer.from(JSON.stringify(openaiToAnthropic(parsed, modelOverride)));
-          } catch { /* send as-is */ }
-        } else {
-          try {
-            const parsed = JSON.parse(body.toString()) as { stream?: boolean };
-            clientWantsStream = !!parsed.stream;
-          } catch {}
-        }
-        const cliResult = await handleViaCli(cliBody, modelOverride, verbose);
-        requestCount++;
-        sendCliResponse(res, cliResult, clientWantsStream, isOpenAI, corsOrigin, SECURITY_HEADERS);
-        return;
-      }
-
       // Parse body once, apply OpenAI translation, model override, and sanitization
       let finalBody: Buffer | undefined = body.length > 0 ? body : undefined;
       let ccToolMap: Map<string, { ccTool: string }> | null = null;
@@ -761,7 +530,7 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<void> {
         beta = 'oauth-2025-04-20';
         if (clientBeta) beta += ',' + clientBeta;
       } else {
-        // CC v2.1.104 beta set (exact 8 from MITM capture, exact order).
+        // CC v2.1.104 beta set — 8 flags in the order Claude Code sends them.
         // context-1m requires Extra Usage — if it 400s, we auto-retry without it.
         beta = 'claude-code-20250219,oauth-2025-04-20,context-1m-2025-08-07,interleaved-thinking-2025-05-14,context-management-2025-06-27,prompt-caching-scope-2026-01-05,advisor-tool-2026-03-01,effort-2025-11-24';
         if (clientBeta) {
@@ -780,7 +549,7 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<void> {
       }
       lastRequestTime = Date.now();
 
-      // Rotate session ID per request — CC --print creates a new session each invocation
+      // Rotate session ID per request — fresh UUID avoids persistent-session fingerprinting
       SESSION_ID = randomUUID();
 
       const headers: Record<string, string> = {
@@ -830,24 +599,20 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<void> {
         } else if (upstream.status === 429) {
           // Not a context-1m issue — return enriched 429 directly
           const enriched = enrich429(peekedBody, upstream.headers);
-          if (!(cliAvailable && !useCli)) {
-            const responseHeaders: Record<string, string> = {
-              'Content-Type': 'application/json',
-              'Access-Control-Allow-Origin': corsOrigin,
-              ...SECURITY_HEADERS,
-            };
-            for (const [key, value] of upstream.headers.entries()) {
-              if (key.startsWith('x-ratelimit') || key.startsWith('anthropic-ratelimit') || key === 'request-id') {
-                responseHeaders[key] = value;
-              }
+          const responseHeaders: Record<string, string> = {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': corsOrigin,
+            ...SECURITY_HEADERS,
+          };
+          for (const [key, value] of upstream.headers.entries()) {
+            if (key.startsWith('x-ratelimit') || key.startsWith('anthropic-ratelimit') || key === 'request-id') {
+              responseHeaders[key] = value;
             }
-            requestCount++;
-            res.writeHead(429, responseHeaders);
-            res.end(enriched);
-            return;
           }
-          // Fall through to CLI fallback below — need to re-handle 429 with
-          // already-consumed body; stash it for the fallback path.
+          requestCount++;
+          res.writeHead(429, responseHeaders);
+          res.end(enriched);
+          return;
         } else if (upstream.status === 400) {
           // Non-long-context 400 — forward upstream error directly.
           // The body is already consumed, so we write it straight out.
@@ -867,7 +632,7 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<void> {
       }
 
       // Enrich 429 errors with rate limit details from headers (Anthropic only returns "Error")
-      if (upstream.status === 429 && !(cliAvailable && !useCli)) {
+      if (upstream.status === 429) {
         const errBody = await upstream.text().catch(() => '');
         const enriched = enrich429(errBody, upstream.headers);
         const responseHeaders: Record<string, string> = {
@@ -883,38 +648,6 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<void> {
         requestCount++;
         res.writeHead(429, responseHeaders);
         res.end(enriched);
-        return;
-      }
-
-      // Auto-fallback: if API returns 429 and CLI is available, retry through CLI binary
-      if (upstream.status === 429 && cliAvailable && !useCli) {
-        const errBody429 = await upstream.text().catch(() => '');
-        if (verbose) console.log(`[dario] #${requestCount} 429 from API — falling back to CLI`);
-        let clientWantsStream = false;
-        try { clientWantsStream = !!JSON.parse(body.toString()).stream; } catch {}
-        const cliResult = await handleViaCli(body, modelOverride, verbose);
-        // If CLI fallback also failed, return the original 429 with enriched details
-        // instead of a cryptic 502 from CLI failure
-        if (cliResult.status >= 500) {
-          if (verbose) console.log(`[dario] #${requestCount} CLI fallback failed (${cliResult.status}) — returning original 429`);
-          const enriched = enrich429(errBody429, upstream.headers);
-          const responseHeaders: Record<string, string> = {
-            'Content-Type': 'application/json',
-            'Access-Control-Allow-Origin': corsOrigin,
-            ...SECURITY_HEADERS,
-          };
-          for (const [key, value] of upstream.headers.entries()) {
-            if (key.startsWith('x-ratelimit') || key.startsWith('anthropic-ratelimit') || key === 'request-id') {
-              responseHeaders[key] = value;
-            }
-          }
-          requestCount++;
-          res.writeHead(429, responseHeaders);
-          res.end(enriched);
-          return;
-        }
-        requestCount++;
-        sendCliResponse(res, cliResult, clientWantsStream, isOpenAI, corsOrigin, SECURITY_HEADERS);
         return;
       }
 
@@ -1032,7 +765,9 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<void> {
   });
 
   server.listen(port, LOCALHOST, () => {
-    const modeLine = passthrough ? 'Mode: passthrough (OAuth swap only, no injection)' : useCli ? 'Backend: Claude CLI (bypasses rate limits)' : `OAuth: ${status.status} (expires in ${status.expiresIn})`;
+    const modeLine = passthrough
+      ? 'Mode: passthrough (OAuth swap only, no injection)'
+      : `OAuth: ${status.status} (expires in ${status.expiresIn})`;
     const modelLine = modelOverride ? `Model: ${modelOverride} (all requests)` : 'Model: passthrough (client decides)';
     console.log('');
     console.log(`  dario — http://localhost:${port}`);
@@ -1048,8 +783,8 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<void> {
     console.log('');
   });
 
-  // Session presence heartbeat — registers this proxy as an active Claude Code session
-  // Claude Code sends this every 5 seconds; the server uses it for priority routing
+  // Session presence heartbeat — keeps the OAuth session marked active
+  // (matches the ~5s cadence of a real Claude Code session).
   const clientId = randomUUID();
   const connectedAt = new Date().toISOString();
   let lastPresencePulse = 0;
