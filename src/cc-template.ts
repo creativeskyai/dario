@@ -34,6 +34,30 @@ export const CC_SYSTEM_PROMPT = TEMPLATE.system_prompt;
 /** CC's agent identity string. */
 export const CC_AGENT_IDENTITY = TEMPLATE.agent_identity;
 
+// Framework identifiers that would flag non-CC usage. Stripped from the system
+// prompt and from message content text blocks before the request goes upstream.
+const FRAMEWORK_PATTERNS: RegExp[] = [
+  // Compound/hyphenated patterns run first so their halves can't be eaten
+  // by the simpler word-level patterns below.
+  /\b(roo[- ]?cline|big[- ]?agi|claude[- ]?bridge)\b/gi,
+  /\b(openclaw|hermes|aider|cursor|windsurf|cline|continue|copilot|cody)\b/gi,
+  /\b(librechat|typingmind)\b/gi,
+  /\b(openai|gpt-4|gpt-3\.5)\b/gi,
+  /powered by [a-z]+/gi,
+  /\bgateway\b/gi,
+  // OC's sessions_* tool-name prefix — flagged as a fingerprint in dario#23.
+  /\bsessions_[a-z_]+\b/gi,
+];
+
+export function scrubFrameworkIdentifiers(text: string): string {
+  let result = text;
+  for (const pattern of FRAMEWORK_PATTERNS) {
+    pattern.lastIndex = 0;
+    result = result.replace(pattern, '');
+  }
+  return result;
+}
+
 /** Client tool name → CC tool mapping with parameter translation. */
 interface ToolMapping {
   ccTool: string;
@@ -232,15 +256,31 @@ export function buildCCRequest(
       .join('\n\n');
   }
 
-  // Strip framework identifiers from system prompt that would flag non-CC usage
-  const FRAMEWORK_PATTERNS = [
-    /\b(openclaw|hermes|aider|cursor|windsurf|cline|continue|copilot|cody)\b/gi,
-    /\b(openai|gpt-4|gpt-3\.5)\b/gi,
-    /powered by [a-z]+/gi,
-    /\bgateway\b/gi,
-  ];
-  for (const pattern of FRAMEWORK_PATTERNS) {
-    systemText = systemText.replace(pattern, '');
+  systemText = scrubFrameworkIdentifiers(systemText);
+
+  // Also scrub framework identifiers from message content text blocks.
+  // Clients often inject their product name into user/tool messages as well,
+  // and the system-prompt-only scrub used to miss those.
+  for (const msg of messages) {
+    if (typeof msg.content === 'string') {
+      msg.content = scrubFrameworkIdentifiers(msg.content as string);
+    } else if (Array.isArray(msg.content)) {
+      for (const block of msg.content as Array<Record<string, unknown>>) {
+        if (block.type === 'text' && typeof block.text === 'string') {
+          block.text = scrubFrameworkIdentifiers(block.text);
+        }
+        if (block.type === 'tool_result' && typeof block.content === 'string') {
+          block.content = scrubFrameworkIdentifiers(block.content);
+        }
+        if (block.type === 'tool_result' && Array.isArray(block.content)) {
+          for (const sub of block.content as Array<Record<string, unknown>>) {
+            if (sub.type === 'text' && typeof sub.text === 'string') {
+              sub.text = scrubFrameworkIdentifiers(sub.text);
+            }
+          }
+        }
+      }
+    }
   }
 
   // ── Build the CC request from template ──

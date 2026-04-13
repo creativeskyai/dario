@@ -149,6 +149,7 @@ const ORCHESTRATION_TAG_NAMES = [
   'system-reminder', 'env', 'system_information', 'current_working_directory',
   'operating_system', 'default_shell', 'home_directory', 'task_metadata',
   'directories', 'thinking',
+  'agent_persona', 'agent_context', 'tool_context', 'persona', 'tool_call',
 ];
 const ORCHESTRATION_PATTERNS = ORCHESTRATION_TAG_NAMES.flatMap(tag => [
   new RegExp(`<${tag}\\b[^>]*>[\\s\\S]*?<\\/${tag}>`, 'gi'),
