@@ -37,7 +37,7 @@ export ANTHROPIC_API_KEY=dario                    # or OPENAI_API_KEY=dario
 
 Opus, Sonnet, Haiku — all models, streaming, tool use. **Zero dependencies.** ~2,000 lines of TypeScript. Works with Cursor, Continue, Aider, LiteLLM, Hermes, OpenClaw, or any tool that speaks the Anthropic or OpenAI API. Auto-launches under [Bun](https://bun.sh) when available for TLS fingerprint fidelity. **Auto-detects OAuth config from your installed CC binary** so dario stays in sync forever — Anthropic can rotate client IDs and dario picks them up on the next run.
 
-dario is built and maintained by [askalf](https://askalf.org) — the open-source foundation of the askalf agent platform. If you need more than a proxy, [see below](#askalf).
+dario is the **per-request layer** — one account, one workload, every request indistinguishable from CC on the wire. Session-level and account-level concerns (multi-account pooling, behavioral-classifier shaping, 24/7 fleets) live a layer above dario, in [askalf](https://askalf.org) — [see below](#askalf). Both are built by the same team on the same OAuth and billing infrastructure.
 
 <table>
 <tr>
@@ -91,7 +91,7 @@ dario is the only proxy that solves this. Instead of transforming your requests 
 | **Approach** | Template replay — sends CC's actual request | Signal matching or none |
 | **Tools** | CC's exact tool definitions sent upstream | Client tools (detected) |
 | **Max plan limits** | Used correctly | Bypassed — billed separately |
-| **Detection resistance** | Undetectable without flagging CC itself | Detected by tool names, field order, effort level, etc. |
+| **Detection resistance** | Undetectable at the per-request level without flagging CC itself | Detected by tool names, field order, effort level, etc. |
 | **Dependencies** | 0 | Many |
 
 <details>
@@ -521,11 +521,11 @@ curl http://localhost:3456/health
 
 ## askalf
 
-dario solves the API access problem — your $200/mo subscription, usable everywhere, billed correctly.
+**dario and askalf solve different layers of the same problem.**
 
-But a proxy has a ceiling. Every request still runs on your single account, with your subscription's rate limits, on your machine. When you need to scale beyond that — multiple accounts, persistent browser sessions, desktop control, scheduled workflows, a fleet of agents that can run while you sleep — that's what [askalf](https://askalf.org) is built for.
+dario is the per-request layer: one account, one workload, every request on the wire indistinguishable from Claude Code. It's what you reach for when you want your Max/Pro subscription usable from any tool that speaks the Anthropic or OpenAI API. It does not pool accounts, shape sessions, distribute load, or care about cumulative behavioral signals — those are not per-request concerns, and solving them at the per-request layer is a category error.
 
-**askalf** is the agent platform built on top of the same OAuth and billing infrastructure that powers dario:
+**askalf** is the layer above that: multi-account pooling behind one endpoint, session and workload shaping to stay under Anthropic's session-level classifiers, persistent browser and desktop sessions, scheduling, and a hosted fleet that runs 24/7. Built on the same OAuth and billing infrastructure as dario.
 
 | | dario | askalf |
 |---|---|---|
@@ -577,6 +577,9 @@ Dario auto-detects OAuth config from your installed Claude Code binary. When CC 
 
 **I'm hitting rate limits. What do I do?**
 Claude subscriptions have rolling 5-hour and 7-day usage windows. Check your utilization with Claude Code's `/usage` command or the [statusline](https://code.claude.com/docs/en/statusline). Rate limit errors from dario include utilization percentages and reset times so you can see exactly when capacity returns.
+
+**My multi-agent workload is getting reclassified to overage even though dario template-replays per request. Why?**
+Because reclassification at high agent volume is not a per-request problem. Anthropic's classifier operates on cumulative per-OAuth-session behavioral aggregates — token throughput, conversation depth, streaming duration, inter-arrival timing, thinking-block volume. Dario can make each individual request indistinguishable from Claude Code and still hit this wall on a long-running agent session, because the wall isn't at the request level. Thorough diagnostic work on this was contributed by [@belangertrading](https://github.com/belangertrading) in [#23](https://github.com/askalf/dario/issues/23), including the per-request v3.4.3 hardening that landed as a result. For the session-layer shaping itself — multi-account pooling, session rotation, workload distribution that keeps any single account from concentrating the behavioral signal — that's what [askalf](https://askalf.org) is built for. Different layer, different tool.
 
 If you're running a multi-agent workload and consistently hitting limits, [askalf](https://askalf.org) distributes load across multiple accounts automatically.
 
