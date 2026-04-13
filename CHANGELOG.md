@@ -5,10 +5,13 @@ All notable changes to this project will be documented in this file.
 ## [3.4.2] - 2026-04-13
 
 ### Added
-- **Additional client tool mappings** — Expanded `TOOL_MAP` with more aliases so agents that use non-standard tool names (`browser`, `message`, `todo_read`/`todo_write`, `mcp_list`/`mcp_call`, `task_create`/`task_update`, `enter_plan_mode`/`exit_plan_mode`, `enter_worktree`/`exit_worktree`) get routed to the closest CC equivalent instead of falling through to the unmapped-tool distribution logic. Contributed via community PR.
+- **`NotebookRead` tool definition** — Pairs with the existing `NotebookEdit` in the CC template. Added to both `tools` and `tool_names`.
+- **Additional client tool aliases** in `TOOL_MAP` — `browser`, `message`, `todo_read`, `notebook_read`, `enter_plan_mode`/`exit_plan_mode`, `enter_worktree`/`exit_worktree`. Each alias routes to a real CC tool that already exists in the template, so third-party agents with non-standard tool names get a clean mapping instead of falling through to the unmapped-tool distributor.
 
 ### Fixed
 - **`package.json` JSON corruption** — A version-bump helper wrote the file's string representation back out with escaped `\n` instead of real newlines, breaking `npm ci` across the Node 18/20/22 CI matrix. Restored proper formatting.
+- **Template tool-list drift from the community tool-mapping PR** — The merged PR added tool definitions for names that aren't part of the real Claude Code tool surface (`Browser`, `TodoRead`, `MCPListTools`, `MCPCallTool`, `TaskCreate`, `TaskUpdate`), and only updated the `tools` array without touching the parallel `tool_names` list, leaving the template internally inconsistent. Removed the non-CC entries so every tool dario advertises to the API matches a real CC tool, and re-synced `tool_names`. Client aliases that previously pointed at the removed names now redirect to the closest real tool (`browser` → `WebFetch`, `todo_read` → `TodoWrite`, etc.).
+- **Stray framework reference in `cc-template.ts`** — Replaced the mapping-section header comment with a neutral label.
 
 ## [3.4.1] - 2026-04-12
 
