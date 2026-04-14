@@ -2,6 +2,34 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.5.0] - 2026-04-13
+
+Multi-account pool mode — the first new user-visible capability since template replay.
+
+### Added
+- **Multi-account pool mode.** Dario can now manage multiple OAuth accounts and route requests by per-account headroom. Pool mode activates automatically when `~/.dario/accounts/` contains 2+ entries. Single-account dario (the default) is unchanged and keeps using `~/.dario/credentials.json`.
+- **`dario accounts` CLI.** New subcommand group: `dario accounts list`, `dario accounts add <alias>`, `dario accounts remove <alias>`. Each account runs its own PKCE OAuth flow — using the same auto-detected CC OAuth config the single-account path uses, not a hardcoded client_id — and lives in `~/.dario/accounts/<alias>.json`. Accounts refresh on independent 15-minute background ticks.
+- **`GET /accounts` endpoint.** Read-only JSON snapshot of the pool: per-account utilization (5h and 7d), billing claim, status, request count, token TTL. Returns `{mode: "single-account", accounts: 0}` when pool mode is not active.
+- **`GET /analytics` endpoint (pool mode).** Per-account and per-model stats, utilization trends in 5-minute buckets, burn-rate estimates, window-exhaustion predictions. Infrastructure scaffolded in this release; request-recording hook lands in v3.5.1 along with the full failover work.
+- **Programmatic pool API.** `AccountPool`, `parseRateLimits`, `loadAllAccounts`, `addAccountViaOAuth`, `refreshAccountToken`, `Analytics`, and related types exported from `@askalf/dario` for library users.
+
+### Changed
+- **Pool-mode request dispatch.** When pool mode is active, every incoming request picks the account with the highest headroom (`1 - max(util5h, util7d)`) and uses that account's access token and device identity for the upstream call. After the response returns, the account's rate-limit snapshot is updated from the response headers so the next selection reflects fresh utilization. A 429 from the upstream marks the account `rejected` and routes subsequent requests elsewhere until reset.
+- **Session ID handling.** Pool mode uses a per-account stable session ID (one per account per proxy lifetime). Single-account mode continues to rotate the session ID per request exactly as before. No behavior change for single-account users.
+
+### Ported from mux
+Three modules from `askalf/mux` lifted into dario with minimal adaptation:
+
+- `src/pool.ts` — headroom-aware account selection, failover target selection (`selectExcluding`), request queueing when all accounts are exhausted, drain-on-headroom loop. ~270 lines.
+- `src/accounts.ts` — per-account credential storage, independent OAuth refresh lifecycle, PKCE flow using dario's auto-detected CC OAuth config (not the hardcoded dev client_id mux was shipping). ~270 lines.
+- `src/analytics.ts` — rolling request history, per-account and per-model stats, burn-rate prediction, exhaustion estimates. ~320 lines.
+
+### Known scope for v3.5.1 (not in this release)
+- **Request-path 429 failover.** v3.5.0 wires pool mode for headroom-aware selection *across* requests and marks accounts rejected when they 429, so the *next* request routes to a different account. It does not yet retry a single in-flight request against the next account when that request 429s — if an account 429s mid-request, that request returns the enriched 429 to the client, and subsequent requests go to a different account. Full inside-request failover ships in v3.5.1.
+- **Analytics recording.** The `/analytics` endpoint is live and the `Analytics` class is in place; hooking `analytics.record()` into the proxy response path ships alongside the failover work in v3.5.1.
+
+No behavior change for single-account dario. Pool mode is opt-in by adding a second account.
+
 ## [3.4.6] - 2026-04-13
 
 ### Changed

@@ -38,6 +38,7 @@ import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { startAutoOAuthFlow, getStatus, refreshTokens, loadCredentials } from './oauth.js';
 import { startProxy, sanitizeError } from './proxy.js';
+import { listAccountAliases, loadAllAccounts, addAccountViaOAuth, removeAccount } from './accounts.js';
 
 const args = process.argv.slice(2);
 const command = args[0] ?? 'proxy';
@@ -151,6 +152,117 @@ async function proxy() {
   await startProxy({ port, host, verbose, model, passthrough, preserveTools });
 }
 
+async function accounts() {
+  const sub = args[1];
+
+  if (!sub || sub === 'list') {
+    const aliases = await listAccountAliases();
+    console.log('');
+    console.log('  dario — Accounts');
+    console.log('  ────────────────');
+    console.log('');
+    if (aliases.length === 0) {
+      console.log('  No multi-account pool configured.');
+      console.log('');
+      console.log('  Pool mode activates automatically when ~/.dario/accounts/');
+      console.log('  has 2+ entries. Add the first with:');
+      console.log('    dario accounts add <alias>');
+      console.log('');
+      console.log('  Single-account dario (the default) keeps working as-is');
+      console.log('  with ~/.dario/credentials.json — you do not need to');
+      console.log('  migrate unless you want pool routing across accounts.');
+      console.log('');
+      return;
+    }
+
+    const loaded = await loadAllAccounts();
+    const now = Date.now();
+    console.log(`  ${aliases.length} account${aliases.length === 1 ? '' : 's'} configured`);
+    if (aliases.length === 1) {
+      console.log('  (Pool mode needs 2+ accounts — single-account mode until another is added.)');
+    }
+    console.log('');
+    for (const a of loaded) {
+      const msLeft = Math.max(0, a.expiresAt - now);
+      const hours = Math.floor(msLeft / 3600000);
+      const mins = Math.floor((msLeft % 3600000) / 60000);
+      const expiry = msLeft > 0 ? `${hours}h ${mins}m` : 'expired';
+      console.log(`    ${a.alias.padEnd(20)} token expires in ${expiry}`);
+    }
+    console.log('');
+    return;
+  }
+
+  if (sub === 'add') {
+    const alias = args[2];
+    if (!alias) {
+      console.error('');
+      console.error('  Usage: dario accounts add <alias>');
+      console.error('');
+      console.error('  <alias> is any label you want for the account (e.g. "work", "personal").');
+      console.error('');
+      process.exit(1);
+    }
+    if (!/^[a-zA-Z0-9._-]+$/.test(alias)) {
+      console.error('[dario] Invalid alias. Use letters, numbers, dot, underscore, dash only.');
+      process.exit(1);
+    }
+    const existing = await listAccountAliases();
+    if (existing.includes(alias)) {
+      console.error(`[dario] Account "${alias}" already exists. Remove it first with \`dario accounts remove ${alias}\`.`);
+      process.exit(1);
+    }
+    console.log('');
+    console.log(`  Adding account "${alias}" to the pool...`);
+    console.log('');
+    try {
+      const creds = await addAccountViaOAuth(alias);
+      const minutes = Math.round((creds.expiresAt - Date.now()) / 60000);
+      console.log('');
+      console.log(`  Account "${alias}" added.`);
+      console.log(`  Token expires in ${minutes} minutes (auto-refreshes in the background).`);
+      const total = (await listAccountAliases()).length;
+      if (total >= 2) {
+        console.log('');
+        console.log('  Pool mode is now active. Restart `dario proxy` to pick up the new account.');
+      } else {
+        console.log('');
+        console.log('  Add at least one more account to activate pool routing:');
+        console.log('    dario accounts add <another-alias>');
+      }
+      console.log('');
+    } catch (err) {
+      console.error('');
+      console.error(`  Failed to add account: ${sanitizeError(err)}`);
+      console.error('');
+      process.exit(1);
+    }
+    return;
+  }
+
+  if (sub === 'remove' || sub === 'rm') {
+    const alias = args[2];
+    if (!alias) {
+      console.error('');
+      console.error('  Usage: dario accounts remove <alias>');
+      console.error('');
+      process.exit(1);
+    }
+    const ok = await removeAccount(alias);
+    if (ok) {
+      console.log(`[dario] Account "${alias}" removed.`);
+    } else {
+      console.error(`[dario] No account "${alias}" found.`);
+      process.exit(1);
+    }
+    return;
+  }
+
+  console.error(`[dario] Unknown accounts subcommand: ${sub}`);
+  console.error('Usage: dario accounts [list|add <alias>|remove <alias>]');
+  process.exit(1);
+}
+
 async function help() {
   console.log(`
   dario — Use your Claude subscription as an API.
@@ -161,6 +273,9 @@ async function help() {
     dario status             Check authentication status
     dario refresh            Force token refresh
     dario logout             Remove saved credentials
+    dario accounts list      List accounts in the multi-account pool
+    dario accounts add NAME  Add a new account to the pool (runs OAuth flow)
+    dario accounts remove N  Remove an account from the pool
 
   Proxy options:
     --model=MODEL            Force a model for all requests
@@ -216,6 +331,7 @@ const commands: Record<string, () => Promise<void>> = {
   proxy,
   refresh,
   logout,
+  accounts,
   help,
   version,
   '--help': help,

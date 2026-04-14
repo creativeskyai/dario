@@ -29,9 +29,11 @@ dario is a local process that turns your Claude Max or Pro subscription into an 
 
 Install it once, log in once (using your existing Claude Code credentials if you have them), and from that point on every tool that speaks the Anthropic API or the OpenAI chat completions API — Cursor, Continue, Aider, LiteLLM, your own scripts, whatever — can reach Claude through `http://localhost:3456`.
 
-**Standalone is the default.** You don't need an account anywhere, you don't need to wait for anything, and nothing phones home. Install and run.
+**Single-account mode is the default.** You don't need an account anywhere, you don't need to wait for anything, and nothing phones home. Install and run.
 
-**Dario is also the local bridge for [askalf](https://askalf.org).** When your workload outgrows a single subscription — multi-account pooling, session shaping to stay under Anthropic's behavioral classifiers, 24/7 fleets, scheduled workflows — dario is the component that keeps running on your machine and connects to the askalf platform. Same install, same commands, extra capabilities unlocked when you link it. You don't have to use askalf to use dario today, and you won't have to change how you use dario when you join askalf later.
+**Pool mode** (new in v3.5.0) lifts multi-account routing into dario itself. Add two or more Claude subscriptions with `dario accounts add`, and dario starts selecting per request by the account with the most headroom, marking exhausted accounts rejected until they reset. No hosted platform required — you run the pool on your machine, against your own subscriptions. See [Multi-Account Pool Mode](#multi-account-pool-mode) below for the details.
+
+Separately, [askalf](https://askalf.org) is the hosted platform that does the things a local proxy on your machine can't — browser and desktop control, scheduling, persistent memory, 24/7 hosted fleets. Different problem, different tool. Dario does not depend on askalf, and askalf is not required to use any dario feature.
 
 ---
 
@@ -75,9 +77,9 @@ No separate API key. No Extra Usage charges. No rebuilding your workflow around 
 
 **Use dario if** you already pay for Claude Max or Pro and you want Claude inside the tools you already use, without paying API rates for every request or routing your work through a second hosted stack.
 
-**Use the Anthropic API directly if** you need platform-native primitives, vendor-managed production usage, high-scale control, or SLAs your subscription tier doesn't cover. Dario isn't trying to replace the API — it's trying to unlock the subscription you already bought.
+**Use dario pool mode if** you're running multi-agent workloads and hitting per-subscription rate limits — add 2–N accounts with `dario accounts add` and dario handles headroom-aware routing across them, all on your machine, against your own subscriptions. No hosted stack to sign up for. See [Multi-Account Pool Mode](#multi-account-pool-mode).
 
-**Use dario + askalf if** you're running multi-agent workloads, hitting session-level rate limits that a single account can't clear, or need a 24/7 fleet. Dario keeps running on your machine as the local bridge; askalf adds multi-account pooling, session shaping, and the platform pieces a single-subscription proxy can't deliver. See [below](#from-standalone-to-askalf).
+**Use the Anthropic API directly if** you need platform-native primitives, vendor-managed production usage, high-scale control, or SLAs your subscription tier doesn't cover. Dario isn't trying to replace the API — it's trying to unlock the subscription you already bought.
 
 **Don't use dario if** you want a subprocess bridge that shells out to `claude --print` under the hood. Those tools (openclaw-claude-bridge and similar) work well for single-team single-machine workloads that can accept a one-subscription rate ceiling and a one-machine deployment. Dario is the API-path alternative, which trades that simplicity for pooling-friendly behavior on the wire. Different tradeoffs, different tool.
 
@@ -148,32 +150,79 @@ Use it when the upstream tool already builds a Claude-Code-shaped request on its
 
 ### Detection scope
 
-Dario is a **per-request layer**. Every request it sends upstream is designed to be indistinguishable from a Claude Code request, and the per-request scrubbing hardened in v3.4.5 makes that meaningfully harder to fingerprint than it was when v3.0 first shipped. What dario cannot do at the per-request level is defend against Anthropic's session-level and account-level classifiers — those operate on cumulative per-OAuth behavioral aggregates (token throughput, conversation depth, streaming duration, inter-arrival timing) and no amount of per-request hardening reaches them. That's a different problem at a different layer, and it's [askalf](https://askalf.org)'s job rather than dario's. See the [FAQ entry](#faq) for the full explanation.
+Dario is a **per-request layer**. Every request it sends upstream is designed to be indistinguishable from a Claude Code request, and the per-request scrubbing hardened in v3.4.5 makes that meaningfully harder to fingerprint than it was when v3.0 first shipped. What dario cannot do at the per-request level is defend against Anthropic's session-level behavioral classifiers — those operate on cumulative per-OAuth aggregates (token throughput, conversation depth, streaming duration, inter-arrival timing) and no amount of per-request hardening reaches them. The practical answer to that problem is *distributing* load across multiple subscriptions so no single account accumulates enough signal to trip the classifier — which is what pool mode (below) does.
 
 ---
 
-## From standalone to askalf
+## Multi-Account Pool Mode
 
-Dario is fully useful on its own. You don't need an account, you don't need to wait for anything, and the standalone mode is and will remain the default.
+*New in v3.5.0.* Dario can manage multiple Claude subscriptions and route each request to the account with the most headroom. Single-account dario is unchanged and remains the default — pool mode activates **only** when `~/.dario/accounts/` contains 2+ accounts.
 
-When your workload grows past what a single Claude subscription can hold, dario is also the local-edge component of the [askalf](https://askalf.org) platform. Same binary, same commands, same local proxy — linking to askalf adds what a per-request layer alone can't deliver:
+```bash
+# Add accounts to the pool. Each runs its own OAuth flow.
+dario accounts add work
+dario accounts add personal
+dario accounts add side-project
 
-| | dario standalone | dario + askalf |
+# List them
+dario accounts list
+
+# Start the proxy — pool mode activates automatically
+dario proxy
+```
+
+### How it routes
+
+Each incoming request picks the account with the highest **headroom**:
+
+```
+headroom = 1 - max(util_5h, util_7d)
+```
+
+The response's `anthropic-ratelimit-unified-*` headers are parsed back into the pool so the next request sees fresh utilization. An account that returns a 429 is marked `rejected` and routed around until its window resets. When every account is exhausted, incoming requests queue for up to 60 seconds waiting for headroom to reappear, with backoff-aware draining.
+
+Accounts can use different plans — mix Max and Pro accounts freely. The pool doesn't care about tier, only headroom.
+
+### Why pool over per-request tricks alone
+
+Per-request template replay is necessary but not sufficient for multi-agent workloads. Anthropic's classifier operates on cumulative per-OAuth-session aggregates (see the [FAQ entry](#faq) on multi-agent reclassification), and no amount of per-request hardening reaches that layer. The practical answer is *distribution* — spread load so no single account accumulates enough signal to trip anything. Pool mode is the piece that does that, and the headroom-aware selection means you don't have to think about which account is which; dario picks.
+
+### Inspection endpoints
+
+```bash
+# Live pool snapshot — per-account utilization, claim, status
+curl http://localhost:3456/accounts
+
+# Pool analytics — per-account / per-model stats, burn-rate, exhaustion predictions
+curl http://localhost:3456/analytics
+```
+
+### Known scope for v3.5.0
+
+Pool mode v3.5.0 ships **headroom-aware selection across requests**. It does not yet retry a single in-flight request against a different account when that request 429s — that ships in v3.5.1 along with analytics recording wiring. Across-request routing is already effective: a 429 on one request immediately marks that account rejected, and the next request goes somewhere else.
+
+---
+
+## Dario and askalf
+
+Dario is fully useful on its own — single-account mode is the default, pool mode (above) scales to as many Claude subscriptions as you want to add, and neither mode requires an account anywhere. Everything dario does is open-source and self-hosted.
+
+[askalf](https://askalf.org) is the hosted platform built on top of the same OAuth and billing infrastructure, targeting the things a local proxy can't deliver by design:
+
+| | dario | askalf |
 |---|---|---|
-| **Accounts** | 1 (yours) | Pool of 2–20+ |
-| **Rate limits** | Your subscription's 5h / 7d windows | Distributed across the pool, near-zero 429s |
-| **Session shaping** | Per-request scrub | Per-session cumulative tracking, rotation, classifier avoidance |
+| **Accounts** | 1 (single) or N (pool mode) | Managed pool, no setup |
+| **Rate limits** | Distributed across your own pool | Distributed across the hosted fleet |
 | **Browser / desktop control** | No | Yes — full computer use |
 | **Scheduling** | No | Cron, webhooks, triggers |
 | **Persistent memory** | No | Per-agent context and state |
 | **Hosted dashboard** | No | Yes |
-| **Local proxy component** | dario | dario |
+| **Runs where** | Your machine | Hosted |
+| **Price** | Free | Paid |
 
-When the askalf bridge endpoint is live, a single command (`dario link`) will pair this local instance with your askalf account and the extra capabilities unlock in place. Until then, standalone is the only mode that runs — nothing to wait for to use dario as it is today.
+Pool mode in dario covers the "I want multi-account routing on my own machine with my own subscriptions" case. askalf covers the "I want someone else to run this, with a dashboard, and 24/7 fleet capabilities my own machine can't give me" case. Dario is and will remain open-source and free.
 
 **[Join the askalf waitlist →](https://askalf.org)**
-
-Dario will always be open-source and free. askalf is the hosted tier for teams who need the layer above.
 
 ---
 
@@ -186,6 +235,9 @@ Dario will always be open-source and free. askalf is the hosted tier for teams w
 | `dario status` | Show OAuth token health and expiry |
 | `dario refresh` | Force an immediate token refresh |
 | `dario logout` | Delete stored credentials |
+| `dario accounts list` | List accounts in the multi-account pool |
+| `dario accounts add <alias>` | Add a new account to the pool (runs OAuth flow) |
+| `dario accounts remove <alias>` | Remove an account from the pool |
 | `dario help` | Full command reference |
 
 ### Proxy options

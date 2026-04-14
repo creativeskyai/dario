@@ -7,6 +7,9 @@ import { homedir } from 'node:os';
 import { arch, platform } from 'node:process';
 import { getAccessToken, getStatus } from './oauth.js';
 import { buildCCRequest, reverseMapResponse } from './cc-template.js';
+import { AccountPool, parseRateLimits, type PoolAccount } from './pool.js';
+import { Analytics } from './analytics.js';
+import { loadAllAccounts, loadAccount, refreshAccountToken } from './accounts.js';
 
 const ANTHROPIC_API = 'https://api.anthropic.com';
 const DEFAULT_PORT = 3456;
@@ -336,11 +339,56 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<void> {
   const verbose = opts.verbose ?? false;
   const passthrough = opts.passthrough ?? false;
 
-  // Verify auth before starting
-  const status = await getStatus();
-  if (!status.authenticated) {
-    console.error('[dario] Not authenticated. Run `dario login` first.');
-    process.exit(1);
+  // Multi-account pool — activated when ~/.dario/accounts/ has 2+ entries.
+  // Single-account dario keeps its existing code path unchanged.
+  const accountsList = await loadAllAccounts();
+  const pool = accountsList.length >= 2 ? new AccountPool() : null;
+  const analytics = pool ? new Analytics() : null;
+  let status: Awaited<ReturnType<typeof getStatus>>;
+  if (pool) {
+    for (const acc of accountsList) {
+      pool.add(acc.alias, {
+        accessToken: acc.accessToken,
+        refreshToken: acc.refreshToken,
+        expiresAt: acc.expiresAt,
+        deviceId: acc.deviceId,
+        accountUuid: acc.accountUuid,
+      });
+    }
+    console.log(`  Pool mode: ${accountsList.length} accounts loaded`);
+    // Background refresh — keep every account's token fresh without blocking requests
+    const refreshInterval = setInterval(async () => {
+      for (const acc of pool.all()) {
+        if (acc.expiresAt < Date.now() + 45 * 60 * 1000) {
+          try {
+            const saved = await loadAccount(acc.alias);
+            if (!saved) continue;
+            const refreshed = await refreshAccountToken(saved);
+            pool.updateTokens(acc.alias, refreshed.accessToken, refreshed.refreshToken, refreshed.expiresAt);
+          } catch (err) {
+            console.error(`[dario] Background refresh failed for ${acc.alias}: ${err instanceof Error ? err.message : err}`);
+          }
+        }
+      }
+    }, 15 * 60 * 1000);
+    refreshInterval.unref();
+    // Pool mode doesn't check single-account status — compute a placeholder
+    // for the startup banner using the pool's earliest expiry.
+    const earliest = Math.min(...pool.all().map(a => a.expiresAt));
+    const msLeft = Math.max(0, earliest - Date.now());
+    status = {
+      authenticated: true,
+      status: 'healthy',
+      expiresAt: earliest,
+      expiresIn: `${Math.floor(msLeft / 3600000)}h ${Math.floor((msLeft % 3600000) / 60000)}m`,
+    };
+  } else {
+    // Single-account mode — existing auth check
+    status = await getStatus();
+    if (!status.authenticated) {
+      console.error('[dario] Not authenticated. Run `dario login` first.');
+      process.exit(1);
+    }
   }
 
   const cliVersion = detectCliVersion();
@@ -449,6 +497,41 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<void> {
       return;
     }
 
+    // Pool status endpoint — shows loaded accounts, headroom, and the
+    // account that would be selected next. Read-only; mutation flows through
+    // the `dario accounts` CLI, not HTTP.
+    if (urlPath === '/accounts' && req.method === 'GET') {
+      if (!pool) {
+        res.writeHead(200, JSON_HEADERS);
+        res.end(JSON.stringify({ mode: 'single-account', accounts: 0 }));
+        return;
+      }
+      const accounts = pool.all().map(a => ({
+        alias: a.alias,
+        util5h: a.rateLimit.util5h,
+        util7d: a.rateLimit.util7d,
+        claim: a.rateLimit.claim,
+        status: a.rateLimit.status,
+        requestCount: a.requestCount,
+        expiresInMs: Math.max(0, a.expiresAt - Date.now()),
+      }));
+      res.writeHead(200, JSON_HEADERS);
+      res.end(JSON.stringify({ mode: 'pool', ...pool.status(), accounts }));
+      return;
+    }
+
+    // Analytics endpoint — request history + burn-rate summary (pool mode only).
+    if (urlPath === '/analytics' && req.method === 'GET') {
+      if (!analytics) {
+        res.writeHead(200, JSON_HEADERS);
+        res.end(JSON.stringify({ mode: 'single-account', note: 'Analytics are only collected in pool mode.' }));
+        return;
+      }
+      res.writeHead(200, JSON_HEADERS);
+      res.end(JSON.stringify(analytics.summary()));
+      return;
+    }
+
     if (urlPath === '/v1/models' && req.method === 'GET') { requestCount++; res.writeHead(200, { ...JSON_HEADERS, 'Access-Control-Allow-Origin': corsOrigin }); res.end(MODELS_JSON); return; }
 
     // Detect OpenAI-format requests
@@ -471,7 +554,25 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<void> {
     let onClientClose: (() => void) | null = null;
     let upstreamAbortReason: 'timeout' | 'client_closed' | null = null;
     try {
-      const accessToken = await getAccessToken();
+      // Pool mode: select an account by headroom. Single-account mode:
+      // fall through to getAccessToken() exactly as before. Request-path
+      // 429 failover (retry with the next-best account before returning a
+      // rate-limit error to the client) lands in v3.5.1 — this release
+      // ships the pool scaffolding and headroom-aware selection across
+      // requests, not within a single 429 retry.
+      let poolAccount: PoolAccount | null = null;
+      let accessToken: string;
+      if (pool) {
+        poolAccount = pool.select();
+        if (!poolAccount) {
+          res.writeHead(503, JSON_HEADERS);
+          res.end(JSON.stringify({ error: 'No accounts available in pool' }));
+          return;
+        }
+        accessToken = poolAccount.accessToken;
+      } else {
+        accessToken = await getAccessToken();
+      }
 
       // Read request body with size limit and timeout (prevents slow-loris)
       const chunks: Buffer[] = [];
@@ -520,9 +621,12 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<void> {
             const billingTag = `x-anthropic-billing-header: cc_version=${fullVersion}; cc_entrypoint=cli; cch=${cch};`;
             const CACHE_1H = { type: 'ephemeral' as const, ttl: '1h' as const };
 
+            const bodyIdentity = poolAccount
+              ? poolAccount.identity
+              : { deviceId: identity.deviceId, accountUuid: identity.accountUuid, sessionId: SESSION_ID };
             const { body: ccBody, toolMap } = buildCCRequest(
               r, billingTag, CACHE_1H,
-              { deviceId: identity.deviceId, accountUuid: identity.accountUuid, sessionId: SESSION_ID },
+              bodyIdentity,
               { preserveTools: opts.preserveTools ?? false },
             );
 
@@ -569,13 +673,16 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<void> {
       }
       lastRequestTime = Date.now();
 
-      // Rotate session ID per request — fresh UUID avoids persistent-session fingerprinting
-      SESSION_ID = randomUUID();
+      // Rotate session ID per request — fresh UUID avoids persistent-session fingerprinting.
+      // Pool mode uses the per-account identity.sessionId which is stable across
+      // a given account's lifetime; single-account mode rotates per request.
+      if (!poolAccount) SESSION_ID = randomUUID();
+      const outboundSessionId = poolAccount ? poolAccount.identity.sessionId : SESSION_ID;
 
       const headers: Record<string, string> = {
         ...staticHeaders,
         'Authorization': `Bearer ${accessToken}`,
-        'x-claude-code-session-id': SESSION_ID,
+        'x-claude-code-session-id': outboundSessionId,
         'anthropic-version': passthrough ? (req.headers['anthropic-version'] as string || '2023-06-01') : '2023-06-01',
         'anthropic-beta': beta,
         'x-client-request-id': randomUUID(),
@@ -613,6 +720,18 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<void> {
         signal: upstreamAbort.signal,
       });
 
+      // Pool mode: capture rate-limit snapshot from the response. parseRateLimits
+      // returns status='rejected' on 429, which makes the next `select()` call
+      // route traffic away from this account until it resets.
+      if (pool && poolAccount) {
+        const snapshot = parseRateLimits(upstream.headers);
+        if (upstream.status === 429) {
+          pool.markRejected(poolAccount.alias, snapshot);
+        } else {
+          pool.updateRateLimits(poolAccount.alias, snapshot);
+        }
+      }
+
       // Auto-retry without context-1m if it triggers a long-context billing error.
       // Anthropic returns this as either 400 ("long context beta is not yet available
       // for this subscription") or 429 ("Extra usage is required for long context
@@ -639,6 +758,15 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<void> {
           // Use the retry response from here on — peeked body is now stale
           upstream = retry;
           peekedBody = null;
+          // Pool mode: re-capture after the context-1m retry as the snapshot may have changed.
+          if (pool && poolAccount) {
+            const retrySnapshot = parseRateLimits(upstream.headers);
+            if (upstream.status === 429) {
+              pool.markRejected(poolAccount.alias, retrySnapshot);
+            } else {
+              pool.updateRateLimits(poolAccount.alias, retrySnapshot);
+            }
+          }
         } else if (upstream.status === 429) {
           // Not a context-1m issue — return enriched 429 directly
           const enriched = enrich429(peekedBody, upstream.headers);
