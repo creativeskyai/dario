@@ -1,7 +1,7 @@
 {
   "name": "@askalf/dario",
-  "version": "3.6.0",
-  "description": "Use your Claude subscription as an API. No API key needed. Local proxy for Claude Max/Pro subscriptions.",
+  "version": "3.6.1",
+  "description": "A local LLM router. One endpoint, every provider — Claude subscriptions, OpenAI, OpenRouter, Groq, local LiteLLM, any OpenAI-compat endpoint — your tools don't need to change.",
   "type": "module",
   "bin": {
     "dario": "./dist/cli.js"
@@ -31,16 +31,23 @@
     "fix:pkg": "node -e \"const fs=require('fs');fs.writeFileSync('package.json',JSON.stringify(JSON.parse(fs.readFileSync('package.json','utf-8')),null,2)+'\\n')\""
   },
   "keywords": [
+    "llm",
+    "llm-router",
+    "multi-provider",
+    "openai-compat",
+    "openai",
+    "openrouter",
+    "groq",
+    "litellm",
+    "ollama",
     "claude",
     "anthropic",
     "oauth",
     "proxy",
     "api",
-    "bridge",
     "subscription",
     "claude-max",
     "claude-pro",
-    "llm",
     "ai",
     "cli",
     "developer-tools"

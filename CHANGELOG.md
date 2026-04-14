@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.6.1] - 2026-04-13
+
+Docs-only release to ship the full positioning rewrite that should have landed with v3.6.0. No code changes; functionally identical to v3.6.0.
+
+### Changed
+
+- **Full README rewrite around the multi-provider story.** Dario's identity is no longer "Claude subscription proxy" — it is "a local LLM router, one endpoint on your machine, every provider behind it." The Claude subscription path is now framed as one of several backends (and the most thoroughly developed one), not as dario's primary purpose. The OpenAI-compat backend shipped in v3.6.0 is now above the fold, not tucked into a section near the end. The "Who this is for" block, first use case, "Why switch" self-qualifier, and quickstart all lead with the multi-provider reality instead of the Claude-only legacy framing.
+- **`package.json` description** updated from "Use your Claude subscription as an API. No API key needed. Local proxy for Claude Max/Pro subscriptions." to "A local LLM router. One endpoint, every provider — Claude subscriptions, OpenAI, OpenRouter, Groq, local LiteLLM, any OpenAI-compat endpoint — your tools don't need to change." This change is visible on the npm package page.
+- **`package.json` keywords** reordered and expanded: `llm`, `llm-router`, `multi-provider`, `openai-compat`, `openrouter`, `groq`, `litellm`, `ollama` added alongside the existing Claude-centric keywords. Search discoverability was previously anchored on Claude-only terms.
+- **README contributor row, FAQ entries, trust table, and all internal links preserved.** The structural spine (Nathan-widjaja's promise → who → first use → why switch → proof) from #21 is kept intact; content inside each section was rewritten around the new backends-first framing.
+
+### Why ship this as a separate release
+
+The v3.6.0 code shipped multi-provider routing but the README still positioned dario as a Claude proxy with multi-provider as a feature. That mismatch meant anyone landing on npm or GitHub would read the wrong story about what dario is, even though the binary they'd install was correct. A docs-only release is the right tool for fixing that — the running bits are unchanged, npm's package page updates, and anyone installing v3.6.1 gets the same runtime as v3.6.0 with the right narrative.
+
+No behavior change, no migration required, nothing deprecated.
+
 ## [3.6.0] - 2026-04-13
 
 Multi-provider routing. Dario stops being Claude-only.
