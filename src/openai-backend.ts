@@ -174,11 +174,15 @@ export async function forwardToOpenAI(
     res.end();
   } catch (err) {
     clearTimeout(timeout);
+    // Log error details server-side only. Responding with err.message
+    // exposes internal stack / path / module information (CodeQL
+    // js/stack-trace-exposure). The client gets a generic 502.
+    const detail = err instanceof Error ? err.message : String(err);
+    if (verbose) console.error(`[dario] openai backend (${backend.name}) error: ${detail}`);
     if (!res.headersSent) {
       res.writeHead(502, { 'Content-Type': 'application/json', ...securityHeaders });
       res.end(JSON.stringify({
         error: 'Upstream OpenAI-compat backend error',
-        message: err instanceof Error ? err.message : String(err),
         backend: backend.name,
       }));
     } else {

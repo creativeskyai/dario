@@ -287,10 +287,12 @@ async function backend() {
     console.log(`  ${all.length} backend${all.length === 1 ? '' : 's'} configured`);
     console.log('');
     for (const b of all) {
-      const redacted = b.apiKey.length > 8
-        ? `${b.apiKey.slice(0, 3)}...${b.apiKey.slice(-4)}`
-        : '***';
-      console.log(`    ${b.name.padEnd(16)} ${b.provider.padEnd(10)} ${b.baseUrl.padEnd(40)} ${redacted}`);
+      // Never emit any substring of the key itself — even partial
+      // prefixes/suffixes (like "sk-proj-...a1b2") are leakage as
+      // far as CodeQL's js/clear-text-logging rule is concerned, and
+      // it's right: partial disclosure is still disclosure. Name and
+      // baseUrl together are enough to identify a backend.
+      console.log(`    ${b.name.padEnd(16)} ${b.provider.padEnd(10)} ${b.baseUrl.padEnd(40)} ***`);
     }
     console.log('');
     return;

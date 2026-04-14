@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.7.2] - 2026-04-14
+
+Security hardening release. Two CodeQL alerts filed against v3.7.1 — one `js/clear-text-logging` error and one `js/stack-trace-exposure` warning — both fixed with minimal-surface patches. No behavior change for any working path.
+
+### Fixed
+
+- **`js/clear-text-logging` (src/cli.ts:293).** `dario backend list` displayed API keys as `${first_3}...${last_4}` as a human-readable identifier. CodeQL's taint tracker (correctly, by policy) treats partial disclosure as disclosure — and it's right: a 7-character window from a 48-character key is more than enough to narrow a brute-force attempt against a known prefix family, and there's no defensible reason to show any substring of an API key in the first place. Fix: the list command now always prints `***` for the redacted column. Backend name and baseUrl are more than enough to tell backends apart.
+
+- **`js/stack-trace-exposure` (src/openai-backend.ts:179).** The OpenAI-compat backend's upstream-error path constructed a 502 response body that included `err instanceof Error ? err.message : String(err)`. `Error.message` can leak internal paths, module names, and stack fragments (DNS errors in particular include the upstream hostname and the resolver's internal state). Fix: the error detail now logs to `console.error` server-side only (gated on `verbose`), and the 502 response body returns a generic `{error, backend}` payload to the client. Operators running `dario proxy --verbose` still see the underlying cause in their logs; clients never do.
+
+### Not changed
+
+- No behavior change for the CLI `dario backend add` flow. API keys are still stored at `~/.dario/backends/<name>.json` with `0600` permissions — that path is unchanged.
+- No behavior change for successful upstream responses on the OpenAI-compat backend. The response body, headers, and streaming semantics are unchanged.
+- No behavior change for the Claude-subscription backend. Tool-use parameter translation, pool mode, template replay — all unchanged.
+
+### Test results
+
+- `test/issue-29-tool-translation.mjs` — 28/28 ✅ (unchanged, tests the Claude backend path which this release doesn't touch)
+
 ## [3.7.1] - 2026-04-14
 
 Regression fix for the v3.7.0 streaming reverse mapper. Reopens and then closes [#29](https://github.com/askalf/dario/issues/29) (reported by [@boeingchoco](https://github.com/boeingchoco)).
