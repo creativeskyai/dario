@@ -243,6 +243,7 @@ curl http://localhost:3456/analytics    # per-account / per-model stats, burn ra
 | `dario backend list` | List configured OpenAI-compat backends |
 | `dario backend add <name> --key=<key> [--base-url=<url>]` | Add an OpenAI-compat backend |
 | `dario backend remove <name>` | Remove an OpenAI-compat backend |
+| `dario shim -- <cmd> [args...]` | **Experimental (v3.12.0).** Run a child process with an in-process fetch patch that rewrites its outbound Anthropic requests — no HTTP proxy involved. See [Experimental: Shim mode](#experimental-shim-mode). |
 | `dario help` | Full command reference |
 
 ### Proxy options
@@ -454,6 +455,39 @@ curl http://localhost:3456/health
 
 ---
 
+## Experimental: Shim mode
+
+*New in v3.12.0. Opt-in. The default path is still the HTTP proxy — shim mode is a second transport, not a replacement.*
+
+Shim mode runs a child process with an **in-process `globalThis.fetch` patch** that rewrites the child's outbound requests to `api.anthropic.com/v1/messages` exactly the way the proxy would, then sends them directly from the child to Anthropic. No localhost HTTP hop. No port to bind. No `ANTHROPIC_BASE_URL` to set.
+
+```bash
+dario shim -- claude --print "hello"
+dario shim -v -- claude --print "hello"        # verbose
+```
+
+Under the hood: `dario shim` spawns the child with `NODE_OPTIONS=--require <dario-runtime.cjs>` and a unix socket / named pipe for telemetry. The runtime patches `globalThis.fetch` only for Anthropic messages requests, applies the same template replay the proxy does (system prompt, tools, user agent, beta flags), and relays per-request events back to the parent so analytics still work. Every other fetch call in the child is untouched and failsafe-passes through on any internal error.
+
+**When to use shim mode**
+- Running a single CC instance on a locked-down machine where binding a local port is inconvenient or forbidden.
+- Wrapping one-off scripts (`dario shim -- node my-agent.js`) without setting up environment variables.
+- Debugging a specific child process in isolation — verbose logs are scoped to that process.
+
+**When to stay on the proxy** (which is still the default)
+- Multi-client routing. The proxy serves every tool on the machine through one endpoint; the shim wraps one child at a time.
+- Multi-account pool mode. Pooling across subscriptions needs a shared OAuth pool the proxy owns — a shim patch inside one child can't see the pool state.
+- Anything that isn't a Node / Bun child. The shim relies on `NODE_OPTIONS`, so non-JS runtimes (Python SDK, a Go CLI) still need the proxy.
+
+Limitations at v3.12.0:
+- Bun child detection is partial — known-good with `claude --print` on Node.
+- No `--replace claude` global wrapper yet; you call `dario shim -- claude ...` explicitly.
+- Per-request token cost recording in shim mode is still being wired into analytics.
+- Windows named-pipe CI coverage is incomplete.
+
+The shim runtime lives at `src/shim/runtime.cjs` (hand-written CJS so `--require` can load it) and the host orchestrator at `src/shim/host.ts`. ~180 lines total. See the [v3.12.0 release notes](https://github.com/askalf/dario/releases/tag/v3.12.0) for the full design writeup.
+
+---
+
 ## Endpoints
 
 | Path | Description |
@@ -464,7 +498,7 @@ curl http://localhost:3456/health
 | `GET /health` | Proxy health + OAuth status + request count |
 | `GET /status` | Detailed Claude OAuth token status |
 | `GET /accounts` | Pool snapshot (pool mode only) |
-| `GET /analytics` | Per-account / per-model stats, burn rate, exhaustion predictions (pool mode only) |
+| `GET /analytics` | Per-account / per-model stats, burn rate, exhaustion predictions. **v3.11.1+:** every request carries a `billingBucket` field (`five_hour` / `seven_day` / `overage` / `unknown`) so you can see, at a glance, which bucket each request billed against. (pool mode only) |
 
 ---
 
@@ -522,6 +556,9 @@ This establishes a session baseline. Without priming, brand-new accounts occasio
 
 **What happens when Anthropic rotates the OAuth config?**
 Dario auto-detects OAuth config from the installed Claude Code binary. When CC ships a new version with rotated values, dario picks them up on the next run. Cache at `~/.dario/cc-oauth-cache-v3.json`, keyed by the CC binary fingerprint. Falls back to hardcoded CC 2.1.104 prod values if CC isn't installed.
+
+**What happens when Anthropic changes the CC request template?**
+*New in v3.11.0.* Dario extracts the live request template from your installed Claude Code binary on startup — the system prompt slices, tool schemas, user-agent, beta flags — and uses those to replay requests instead of a version pinned into dario itself. When CC ships a new version with a tweaked template, the next `dario proxy` run picks it up automatically. Fallback: the hand-curated `src/cc-template-data.json` bundled with the release, so dario still works even if the installed CC binary is a version the extractor doesn't know how to read. See `src/live-fingerprint.ts`.
 
 **I'm hitting rate limits on the Claude backend. What do I do?**
 Claude subscriptions have rolling 5-hour and 7-day usage windows. Check utilization with Claude Code's `/usage` command or the [statusline](https://code.claude.com/docs/en/statusline). For multi-agent workloads, add more accounts and let pool mode distribute the load: `dario accounts add <alias>`.
@@ -586,19 +623,22 @@ Longer-form writing on how dario works and why it works that way:
 
 ## Contributing
 
-PRs welcome. The codebase is ~2,500 lines of TypeScript across 10 files:
+PRs welcome. The codebase is small TypeScript — around ~3,000 lines across ~14 files:
 
 | File | Purpose |
 |---|---|
 | `src/proxy.ts` | HTTP proxy server, request handler, rate governor, Claude backend dispatch |
 | `src/cc-template.ts` | CC request template engine, tool mapping, orchestration & framework scrubbing |
-| `src/cc-template-data.json` | CC request template data (25 tools, 25KB system prompt) |
+| `src/cc-template-data.json` | Bundled fallback CC request template (used when live-fingerprint extraction isn't possible) |
 | `src/cc-oauth-detect.ts` | OAuth config auto-detection from the installed CC binary |
+| `src/live-fingerprint.ts` | **v3.11.0.** Live extraction of the CC request template (system prompt, tools, user-agent, beta flags) from the installed Claude Code binary |
 | `src/oauth.ts` | Single-account token storage, PKCE flow, auto-refresh |
 | `src/accounts.ts` | Multi-account credential storage and independent OAuth lifecycle |
 | `src/pool.ts` | Account pool, headroom-aware routing, failover target selection |
-| `src/analytics.ts` | Rolling request history, per-account / per-model stats, burn-rate |
+| `src/analytics.ts` | Rolling request history, per-account / per-model stats, burn-rate, billing bucket classification |
 | `src/openai-backend.ts` | OpenAI-compat backend credential storage and request forwarder |
+| `src/shim/runtime.cjs` | **v3.12.0.** Hand-written CJS payload loaded into child processes via `NODE_OPTIONS=--require`; patches `globalThis.fetch` for Anthropic messages requests only |
+| `src/shim/host.ts` | **v3.12.0.** Parent-side orchestrator for `dario shim` — spawns the child, owns the telemetry socket / named pipe, feeds analytics |
 | `src/cli.ts` | CLI entry point, command routing, Bun auto-relaunch |
 | `src/index.ts` | Library exports |
 
