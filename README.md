@@ -245,7 +245,7 @@ curl http://localhost:3456/analytics    # per-account / per-model stats, burn ra
 | Flag / env | Description | Default |
 |---|---|---|
 | `--passthrough` / `--thin` | Thin proxy for the Claude backend — OAuth swap only, no template injection | off |
-| `--preserve-tools` / `--keep-tools` | Keep client tool schemas instead of remapping to CC tools (Claude backend) | off |
+| `--preserve-tools` / `--keep-tools` | Keep client tool schemas instead of remapping to CC's `Bash/Read/Grep/Glob/WebSearch/WebFetch`. Required for clients whose tools have fields CC doesn't (`sessionId`, custom ids, etc.) — see [Custom tool schemas](#custom-tool-schemas). Trade-off: drops the CC request fingerprint. | off |
 | `--model=<name>` | Force a model (`opus`, `sonnet`, `haiku`, or full ID). Applies to the Claude backend. | passthrough |
 | `--port=<n>` | Port to listen on | `3456` |
 | `--host=<addr>` / `DARIO_HOST` | Bind address. Use `0.0.0.0` for LAN, or a specific IP (e.g. a Tailscale interface). When non-loopback, also set `DARIO_API_KEY`. | `127.0.0.1` |
@@ -346,6 +346,24 @@ curl http://localhost:3456/v1/chat/completions \
 ### Streaming, tool use, prompt caching, extended thinking
 
 All supported. Claude backend: full Anthropic SSE format plus OpenAI-SSE translation for tool_use streaming. OpenAI-compat backend: streaming body forwarded byte-for-byte.
+
+### Custom tool schemas
+
+By default, on the Claude backend, dario replaces your client's tool definitions with the real Claude Code tools (`Bash`, `Read`, `Grep`, `Glob`, `WebSearch`, `WebFetch`) and translates parameters back and forth. That's how dario looks like CC on the wire, which is what lets your request bill against your Claude subscription instead of API pricing.
+
+The trade-off: if your client's tools carry fields CC's schema doesn't have — a `sessionId`, a custom request id, a channel-bound context token, anything — those fields don't survive the round trip. The model only ever sees `Bash({command})`, responds with `Bash({command})`, and dario's reverse map rebuilds your tool call without the fields the model never saw. Your validator then rejects the call for a missing required field.
+
+Symptom: your tool calls come back looking stripped-down, or your runtime complains about a required field being absent *only when routed through dario's Claude backend*, while the same tools work fine against a direct API key or the OpenAI-compat backend.
+
+Fix: run dario with `--preserve-tools` (or `--keep-tools`). That skips the CC tool remap entirely, passes your client's tool definitions through to the model unchanged, and lets the model populate every field your schema expects.
+
+```bash
+dario proxy --preserve-tools
+```
+
+The cost: requests no longer look like CC on the wire, so the CC subscription fingerprint is gone. On a Max/Pro plan, that means the request may be counted against your API usage rather than your subscription quota. If you're on API-key billing already, `--preserve-tools` is free; if you're using dario specifically to route against a subscription, decide whether your custom-schema workload is worth the fingerprint loss on that endpoint. (A hybrid mode that keeps the fingerprint and also passes through unmapped client fields is on the roadmap.)
+
+The openai-compat backend (OpenRouter, OpenAI, Groq, local LiteLLM, etc.) is unaffected — it forwards tool definitions byte-for-byte and doesn't need this flag.
 
 ### Library mode
 

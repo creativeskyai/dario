@@ -2,6 +2,41 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.8.1] - 2026-04-14
+
+Documentation release. No code change. Surfaces [`--preserve-tools`](README.md#custom-tool-schemas) as the first-class answer for clients whose tool schemas carry fields CC's schema doesn't — credit to [@boeingchoco](https://github.com/boeingchoco) for the diagnostic work on [#29](https://github.com/askalf/dario/issues/29) that surfaced the discoverability gap.
+
+### Background
+
+[#29](https://github.com/askalf/dario/issues/29) originally surfaced as a reverse-direction tool parameter translation bug, fixed in v3.7.0 and v3.7.1. After upgrading to v3.7.1, [@boeingchoco](https://github.com/boeingchoco) reported that OpenClaw still failed with `sessionId is required for this action.` on the Claude backend — but the same OpenClaw install worked fine against `openai-codex/gpt5.4` and `github-copilot/claude-sonnet-4.6` through dario's OpenAI-compat backend. Same channel, same tools, same validator.
+
+That provider-comparison evidence was the whole key: the `sessionId` failure isn't a tool-translation bug, it's the fundamental design of the CC-template path. `buildCCRequest` substitutes the client's tool schema with CC's `Bash/Read/Grep/Glob/WebSearch/WebFetch` definitions so the outgoing request looks like a real CC call on the wire (the fingerprint that lets subscription billing match the request to a Max/Pro plan). The side effect: fields the client's schema declares but CC's doesn't — `sessionId`, channel-bound context tokens, custom request ids — never reach the model, because the model never sees them in the schema it's asked to populate. The reverse mapper rebuilds the tool call without those fields, and a strict client validator rejects.
+
+`--preserve-tools` has existed since v3.6.0 as the escape hatch: skip the CC tool remap entirely, pass the client's schema through to the model unchanged, accept that the CC fingerprint is gone and the request may bill as API usage rather than subscription usage. The flag was documented as one line in the proxy-flag table — not nearly enough to be findable by someone hitting exactly the problem it solves.
+
+### Changed
+
+- **README.md — `--preserve-tools` flag entry rewritten** with the required-for-custom-schemas hint and a link to the new subsection below. A user who hits `sessionId is required` now has a discoverable path from the proxy-flag table directly to the explanation.
+
+- **README.md — new "Custom tool schemas" subsection** (between "Streaming, tool use, OpenAI-SSE" and "Library mode") explaining:
+  - What the default CC tool substitution does and why it exists (the subscription fingerprint)
+  - What fails when your client's tools have fields CC's schema doesn't
+  - The symptom — tool calls stripped down, validator rejects, *only* on dario's Claude backend
+  - The fix — `dario proxy --preserve-tools`
+  - The trade-off — loss of the CC fingerprint, subscription billing may fall back to API pricing on that endpoint
+  - The openai-compat backend is unaffected (it forwards tool schemas byte-for-byte)
+  - The hybrid mode that keeps the fingerprint *and* passes unmapped client fields is on the roadmap
+
+### Not changed
+
+- `src/cc-template.ts`, `src/proxy.ts`, `src/openai-backend.ts` — no behavior change anywhere in the request path. This release is README-only.
+- `--preserve-tools` itself — same flag, same semantics, same code path since v3.6.0. Only its documentation changed.
+- All test suites pass unchanged. `test/issue-29-tool-translation.mjs` — 28/28 ✅.
+
+### Credit
+
+[@boeingchoco](https://github.com/boeingchoco) now cited in three consecutive releases: the original [#29](https://github.com/askalf/dario/issues/29) report (v3.7.0), the v3.7.1 regression catch, and the provider-comparison diagnostic that drove this docs release. The kind of depth-of-reporting any project maintainer would be lucky to see once.
+
 ## [3.8.0] - 2026-04-14
 
 Two features that have been in the backlog since v3.5.0: real analytics data in pool mode, and inside-request 429 failover.
