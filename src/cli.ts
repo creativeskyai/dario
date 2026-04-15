@@ -393,18 +393,13 @@ async function help() {
                              Full IDs: claude-opus-4-6, claude-sonnet-4-6
                              Default: passthrough (client decides)
     --passthrough, --thin    Thin proxy — OAuth swap only, no injection
-    --preserve-tools         Keep client tool schemas (for agents with custom tools)
-    --hybrid-tools           Remap to CC tools AND inject request-context fields
-                             (sessionId, requestId, channelId, userId, timestamp)
-                             declared on the client's tool schema but missing
-                             from CC's. Preserves CC fingerprint. See #33.
+    --preserve-tools         Forward client tool schemas unchanged
+                             Loses subscription routing; use for custom agents
+    --hybrid-tools           Remap to CC tools, inject sessionId/requestId/etc.
+                             Keeps subscription routing for custom agents
     --port=PORT              Port to listen on (default: 3456)
     --host=ADDRESS           Address to bind to (default: 127.0.0.1)
-                             Use 0.0.0.0 to accept connections from other machines.
-                             Alternatively set DARIO_HOST env var.
-                             When binding non-loopback, also set DARIO_API_KEY
-                             so unauthenticated LAN hosts can't proxy through
-                             your OAuth subscription.
+                             Use 0.0.0.0 for LAN; see README for DARIO_API_KEY
     --verbose, -v            Log all requests
 
   Quick start:

@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.9.2] - 2026-04-14
+
+Docs-only: tighten three `dario help` flag entries for consistency.
+
+### Changed
+
+- **`src/cli.ts` help text** — `--preserve-tools`, `--hybrid-tools`, and `--host=ADDRESS` rewritten to matching two-line entries. Removes shell-meaningless `#33` reference and "CC fingerprint" jargon from `--hybrid-tools`; expands `--preserve-tools` into a sibling shape so the subscription-routing trade-off is visible in the legend; trims the `--host` block from 5 lines to 2, deferring the `DARIO_API_KEY` LAN-binding warning to README where it's already documented in full.
+
+No behavior change. No code paths touched outside the `help()` string.
+
 ## [3.9.1] - 2026-04-14
 
 Windows keychain credential detection. Finishes the Windows arm of the v3.7.0 keychain work ([#30](https://github.com/askalf/dario/pull/30) by [@iNicholasBE](https://github.com/iNicholasBE)) that was explicitly stubbed out. Tracked as item 3 of the v3.8.0+ roadmap.
