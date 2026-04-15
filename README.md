@@ -548,6 +548,8 @@ npm run dev   # runs with tsx, no build step
 | [@GodsBoy](https://github.com/GodsBoy) | Proxy authentication, token redaction, error sanitization ([#2](https://github.com/askalf/dario/pull/2)) |
 | [@belangertrading](https://github.com/belangertrading) | Billing classification investigation ([#4](https://github.com/askalf/dario/issues/4)), cache_control fingerprinting ([#6](https://github.com/askalf/dario/issues/6)), billing reclassification root cause ([#7](https://github.com/askalf/dario/issues/7)), OAuth client_id discovery ([#12](https://github.com/askalf/dario/issues/12)), multi-agent session-level billing analysis ([#23](https://github.com/askalf/dario/issues/23)) |
 | [@nathan-widjaja](https://github.com/nathan-widjaja) | README positioning rewrite structure ([#21](https://github.com/askalf/dario/issues/21)) |
+| [@iNicholasBE](https://github.com/iNicholasBE) | macOS keychain credential detection ([#30](https://github.com/askalf/dario/pull/30)) |
+| [@boeingchoco](https://github.com/boeingchoco) | Reverse-direction tool parameter translation ([#29](https://github.com/askalf/dario/issues/29)), SSE event-group framing regression catch (v3.7.1), provider-comparison diagnostic that surfaced the `--preserve-tools` discoverability gap (v3.8.1) |
 
 ---
 
