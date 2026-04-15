@@ -323,6 +323,90 @@ header('dario#36 — hybrid mode drops unmapped tools');
 }
 
 // ======================================================================
+//  dario#37 — reverseScore breaks exec/process collision on Bash
+// ======================================================================
+//
+// OpenClaw declares BOTH `exec` (bash-family, wants {command}) AND
+// `process` (action-discriminator, wants {action}) as sibling tools.
+// Both map to CC's Bash in TOOL_MAP. Pre-fix, the reverse lookup picked
+// one via insertion-order last-wins, and when `process` won every Bash
+// tool call returned as {action: "ls"} and OpenClaw threw "Unknown action".
+// Fix: process has reverseScore: 1, so exec/bash (default 10) wins the
+// reverse slot for CC Bash.
+header('dario#37 — exec wins over process on CC Bash reverse slot');
+{
+  // Order matters — declare process LAST so pre-fix insertion-order
+  // last-wins would have routed Bash → process.
+  const body = {
+    model: 'claude-sonnet-4-6',
+    messages: [{ role: 'user', content: 'run pwd' }],
+    tools: [
+      {
+        name: 'exec',
+        description: 'run a shell command',
+        input_schema: { type: 'object', properties: { command: { type: 'string' } } },
+      },
+      {
+        name: 'process',
+        description: 'session manager',
+        input_schema: { type: 'object', properties: { action: { type: 'string' }, sessionId: { type: 'string' } } },
+      },
+    ],
+  };
+  const built = buildCCRequest(
+    JSON.parse(JSON.stringify(body)),
+    'billing',
+    { type: 'ephemeral', ttl: '1h' },
+    { deviceId: 'd', accountUuid: 'a', sessionId: 's' },
+    {},
+  );
+  const upstream = JSON.stringify({
+    content: [
+      { type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'pwd' } },
+    ],
+  });
+  const remapped = JSON.parse(reverseMapResponse(upstream, built.toolMap));
+  const block = remapped.content[0];
+  check('collision: Bash reverse routes to `exec`, NOT `process`', block.name === 'exec');
+  check('collision: input carries `command`, NOT `action`', block.input.command === 'pwd');
+  check('collision: no stray `action` field (the pre-fix bug)', block.input.action === undefined);
+}
+
+// Same scenario but with process declared FIRST — verifies the score
+// wins over insertion order in either direction.
+{
+  const body = {
+    model: 'claude-sonnet-4-6',
+    messages: [{ role: 'user', content: 'run pwd' }],
+    tools: [
+      {
+        name: 'process',
+        description: 'session manager',
+        input_schema: { type: 'object', properties: { action: { type: 'string' } } },
+      },
+      {
+        name: 'exec',
+        description: 'run a shell command',
+        input_schema: { type: 'object', properties: { command: { type: 'string' } } },
+      },
+    ],
+  };
+  const built = buildCCRequest(
+    JSON.parse(JSON.stringify(body)),
+    'billing',
+    { type: 'ephemeral', ttl: '1h' },
+    { deviceId: 'd', accountUuid: 'a', sessionId: 's' },
+    {},
+  );
+  const upstream = JSON.stringify({
+    content: [{ type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'pwd' } }],
+  });
+  const remapped = JSON.parse(reverseMapResponse(upstream, built.toolMap));
+  check('collision (reverse order): still routes to `exec`', remapped.content[0].name === 'exec');
+  check('collision (reverse order): still carries `command`', remapped.content[0].input.command === 'pwd');
+}
+
+// ======================================================================
 //  Summary
 // ======================================================================
 console.log(`\n${pass} pass, ${fail} fail`);

@@ -100,6 +100,14 @@ export interface ToolMapping {
    * into fields CC's schema doesn't carry. Unset in default mode.
    */
   clientFields?: string[];
+  /**
+   * Reverse-lookup priority for resolving collisions when multiple client
+   * tools map to the same CC tool. Higher wins. Default 10. Set lower for
+   * niche / lossy translations (e.g. OpenClaw's `process` action-discriminator
+   * tool loses most of its schema when flattened to Bash, so bash/exec
+   * should win the Bash reverse slot when both are declared — dario#37).
+   */
+  reverseScore?: number;
 }
 
 /**
@@ -203,10 +211,17 @@ const TOOL_MAP: Record<string, ToolMapping> = {
   // so the model upstream can't actually drive it. Kept mapped for fingerprint
   // continuity but the reverse translation is inherently lossy — clients with a
   // process-style tool should use --preserve-tools instead of --hybrid-tools.
+  //
+  // reverseScore: 1 makes sure that when a client declares BOTH `process` AND
+  // `exec`/`bash` (OpenClaw does — both are exported from bash-tools.ts), the
+  // reverse lookup picks the bash-family mapping for CC's Bash tool slot
+  // instead of routing CC tool calls through process's action-based shape
+  // and breaking every Bash call with "Unknown action" (dario#37).
   process: {
     ccTool: 'Bash',
     translateArgs: (a) => ({ command: a.action || a.cmd || '' }),
     translateBack: (a) => ({ action: a.command ?? '' }),
+    reverseScore: 1,
   },
   read: {
     ccTool: 'Read',
@@ -582,11 +597,22 @@ export function buildCCRequest(
 
 /**
  * Build the CC-name → {clientName, mapping} reverse lookup used by both
- * the non-streaming and streaming reverse-mappers. Two-pass construction
- * preserves the original identity-protection rule: when a client sent a
- * tool with the literal CC name (e.g. `WebSearch`), that pairing claims
- * the CC slot first so a later unmapped-tool fallback that also lands
- * on `WebSearch` can't overwrite it.
+ * the non-streaming and streaming reverse-mappers.
+ *
+ * Two-pass construction preserves the original identity-protection rule:
+ * when a client sent a tool with the literal CC name (e.g. `WebSearch`),
+ * that pairing claims the CC slot first so a later unmapped-tool fallback
+ * that also lands on `WebSearch` can't overwrite it.
+ *
+ * Within the non-identity pass, collisions are broken by `reverseScore`
+ * (higher wins, default 10). This matters when a client declares two
+ * tools that both map to the same CC tool — OpenClaw declares both
+ * `exec` (bash-like, score 10) and `process` (action-discriminator,
+ * score 1) and both map to Bash. Pre-fix, insertion-order last-wins
+ * routed Bash tool calls through `process`, which interpreted the
+ * command string as an action and returned "Unknown action" for
+ * every call. `process` now has reverseScore: 1 so bash/exec wins
+ * (dario#37).
  */
 function buildReverseLookup(toolMap: Map<string, ToolMapping>): Map<string, { clientName: string; mapping: ToolMapping }> {
   const reverseMap = new Map<string, { clientName: string; mapping: ToolMapping }>();
@@ -597,10 +623,15 @@ function buildReverseLookup(toolMap: Map<string, ToolMapping>): Map<string, { cl
       reverseMap.set(mapping.ccTool, { clientName, mapping });
     }
   }
+  // Score-based collision resolution in the non-identity pass.
+  const scoreOf = (m: ToolMapping): number => m.reverseScore ?? 10;
   for (const [clientName, mapping] of toolMap) {
     if (clientName.toLowerCase() === mapping.ccTool.toLowerCase()) continue;
     if (identityClaimed.has(mapping.ccTool)) continue;
-    reverseMap.set(mapping.ccTool, { clientName, mapping });
+    const existing = reverseMap.get(mapping.ccTool);
+    if (!existing || scoreOf(mapping) > scoreOf(existing.mapping)) {
+      reverseMap.set(mapping.ccTool, { clientName, mapping });
+    }
   }
   return reverseMap;
 }

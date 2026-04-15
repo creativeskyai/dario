@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.9.6] - 2026-04-14
+
+Fixes [#37](https://github.com/askalf/dario/issues/37) reported by [@tetsuco](https://github.com/tetsuco) on v3.9.3. The `Read`-on-directory symptom from #35 was fixed in v3.9.3, but two related symptoms (`Bash → Unknown action`, `Glob → image handler misroute`) remained under OpenClaw. v3.9.5 resolved the Glob misroute (hybrid mode now drops unmapped tools like `image`). This release resolves the Bash collision.
+
+### Fixed
+
+- **`buildReverseLookup` now resolves ccTool collisions by `reverseScore`** (`src/cc-template.ts`). When multiple client tools map to the same CC tool, the pre-fix two-pass reverse lookup used insertion-order last-wins. OpenClaw declares BOTH `exec` (bash-family, wants `{command}`) AND `process` (action-discriminator, wants `{action}`) as sibling tools — both exported from [`src/agents/bash-tools.ts:8-10`](https://github.com/openclaw/openclaw/blob/main/src/agents/bash-tools.ts) and registered together in the default agent tool set. Both map to CC's `Bash`. Depending on the order OpenClaw emitted them in the request, `process` could win the reverse slot, and every subsequent CC `Bash` tool call came back rewritten to `{action: "<command string>"}` — OpenClaw's process handler saw the command as an action name and threw `Unknown action pwd` / `Unknown action ls` / etc. for every shell call.
+
+  Fix: `ToolMapping` now carries an optional `reverseScore` (default 10). The non-identity pass of `buildReverseLookup` picks the highest-scoring mapping per ccTool instead of last-wins. `process` has `reverseScore: 1` so when it collides with `exec`/`bash`/`shell`/`run`/`command`/`terminal` (all default score 10), the bash-family mapping always wins and CC's Bash tool calls round-trip correctly as `{command: "..."}`.
+
+  Score wins over insertion order in either direction — test covers both orderings of `[exec, process]` and `[process, exec]` to pin this.
+
+### Added
+
+- **5 new collision-resolution tests** in `test/hybrid-tools.mjs`. Declares both `exec` and `process`, emits a CC `Bash` tool_use, asserts the reverse path routes to `exec` and the input carries `command` (not `action`). Both declaration orders tested. Suite total: 38 pass / 0 fail.
+
 ## [3.9.5] - 2026-04-14
 
 Second fix for [#36](https://github.com/askalf/dario/issues/36). v3.9.4 fixed the `context-1m` retry loop; this release tackles the hybrid-tool reverse-mapping issues in the same report after pulling OpenClaw's source and reading their actual tool definitions. Two real bugs, one honest design admission.
