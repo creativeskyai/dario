@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.10.2] - 2026-04-15
+
+### Fixed
+
+- **Runaway request loop on OpenClaw / framework clients that preserve trailing assistant turns** (`src/cc-template.ts`, #37). v3.10.1's trailing-turn-drop fix was too aggressive: it popped **any** trailing assistant message, not only empty ones. When an agent framework locally appended its model's reply to conversation state and asked the model to continue, dario stripped the assistant turn from the next upstream request. The model never saw its prior reply, regenerated essentially the same response, dario stripped that, and the loop never terminated. @tetsuco reproduced with a single "check Bash/Glob availability" prompt that resulted in 133 POSTs to `/v1/messages` before hitting rate limits and 500s — billing classification held (`five_hour` on every request), so this was purely a loop, not a reclassification.
+
+  Fix: narrow the post-condition pass to drop **only** trailing messages with empty content (`content: []`), which is what the thinking-strip actually produces for a thinking-only turn. Trailing assistant messages with real text or tool_use content are left intact. The original #36 prefill-rejection case is still covered because the failing shape was specifically `content: []` after the strip.
+
+### Changed
+
+- **`test/hybrid-tools.mjs`** — the v3.10.1 regression case that asserted "trailing assistant with real content is dropped" is inverted to "trailing assistant with real content is preserved", and tagged as #37 to match the regression it now guards against. The thinking-only-drop case and the well-formed-conversation-untouched case are unchanged.
+
+---
+
 ## [3.10.1] - 2026-04-15
 
 ### Fixed

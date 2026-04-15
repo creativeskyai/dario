@@ -444,11 +444,13 @@ header('dario#36 — drop trailing assistant/empty turns (prefill rejection)');
 // ======================================================================
 //
 // ======================================================================
-header('dario#36 — drop trailing assistant turn with real content');
+header('dario#37 — trailing assistant with real content is preserved (runaway loop fix)');
 {
-  // Also covers the partial/stale turn case — client posts a request
-  // whose tail is an assistant message that wasn't followed by a user
-  // turn. Must end on user regardless of content shape.
+  // v3.10.1 popped any trailing assistant, including ones with real
+  // text/tool_use content. That caused OpenClaw to runaway-loop: client
+  // appends its assistant reply locally, dario strips it from the next
+  // request, model regenerates the same reply, dario strips that, never
+  // terminates. v3.10.2 drops ONLY empty trailing turns.
   const body = {
     model: 'claude-opus-4-6',
     messages: [
@@ -464,8 +466,8 @@ header('dario#36 — drop trailing assistant turn with real content');
     {},
   );
   const finalMessages = built.body.messages;
-  check('trailing assistant turn dropped', finalMessages.length === 1);
-  check('remaining message is user', finalMessages[0].role === 'user');
+  check('trailing assistant with text content preserved', finalMessages.length === 2);
+  check('last message is still the assistant turn', finalMessages[1].role === 'assistant');
 }
 
 // ======================================================================

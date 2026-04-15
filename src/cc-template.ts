@@ -371,21 +371,23 @@ export function buildCCRequest(
     }
   }
 
-  // ── Drop trailing empty/assistant turns ──
+  // ── Drop trailing empty turns ──
   // An assistant turn that was thinking-only before the strip above becomes
   // content: []. Forwarding that shape makes Anthropic interpret the request
   // as a prefill ("continue from this assistant text"), which Opus 4.6 under
   // adaptive thinking + the claude-code beta refuses with:
   //   "This model does not support assistant message prefill. The
   //    conversation must end with a user message."
-  // Clients that preserve full thinking in history (OpenClaw, Hermes) hit
-  // this any time a prior turn was interrupted mid-thinking. Drop trailing
-  // assistant/empty turns so the request ends on a user message.
+  // Drop ONLY empty trailing turns. Do not pop trailing assistant turns that
+  // still carry text or tool_use content — v3.10.1 popped any trailing
+  // assistant and that caused a runaway loop in OpenClaw (#37): the client
+  // appended its assistant reply locally, dario stripped it from the next
+  // request, the model regenerated the same reply, dario stripped that, and
+  // the loop never terminated (133 POSTs from a single user prompt).
   while (messages.length > 0) {
     const last = messages[messages.length - 1];
     const contentEmpty = Array.isArray(last.content) && (last.content as unknown[]).length === 0;
-    const isTrailingAssistant = last.role === 'assistant';
-    if (contentEmpty || isTrailingAssistant) {
+    if (contentEmpty) {
       messages.pop();
       continue;
     }
