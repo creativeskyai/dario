@@ -2,6 +2,37 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.12.0] - 2026-04-15
+
+### Added — Shim mode (experimental, opt-in)
+
+A second transport for routing CC traffic through dario, alongside the existing proxy. Where proxy mode runs an HTTP server and asks CC to talk to it via `ANTHROPIC_BASE_URL`, **shim mode** injects a `--require` CommonJS payload into a CC child process via `NODE_OPTIONS`, monkey-patches `globalThis.fetch` inside that process, and rewrites outbound `/v1/messages` calls in-place. CC keeps its own OAuth, its own retry/streaming machinery, its own TLS — dario only intercepts the request body (template replay) and the response headers (billing attribution).
+
+The point: detection cost. Anthropic can fingerprint a proxy via TLS, headers, IP, or `BASE_URL` env. They can't easily detect a fetch monkey-patch from inside their own process without shipping signed-binary integrity checks against `globalThis`, and even then the shim runs *before* CC code loads, so it could patch the integrity check too. This is "get ahead of Anthropic" part 2 — part 1 was live fingerprint extraction in v3.11.0.
+
+**Why it's not the new default.** dario's value prop is "one endpoint, every provider, your tools don't need to change," and that requires an HTTP boundary so the same dario can serve CC + OpenClaw + Hermes + raw curl simultaneously, share an OAuth pool across all of them, do failover, and expose `/analytics` to a dashboard. Shim mode only intercepts the one specific child you spawn; it can't multiplex clients, can't share pool state across separate child processes, and is Node-only — if Anthropic ships CC as a Bun or single-binary build, shim mode is dead and proxy mode is the only path. **Proxy stays the router; shim is the stealth escape hatch.** Pick shim when (a) you're only running CC, (b) you suspect Anthropic is fingerprinting your proxy traffic, (c) you accept the Node-only constraint.
+
+#### What's in this release
+
+- **`src/shim/runtime.cjs`** — hand-written CommonJS payload, ~180 lines. Loaded into the child via `NODE_OPTIONS=--require=...`. Exports nothing user-facing; activated by `DARIO_SHIM=1` (so it's a no-op if dario installs it globally and the child isn't a CC invocation). Patches `globalThis.fetch`, gates on POST + `*.anthropic.com/v1/messages`, replaces `body.system[1]` and `body.system[2]` with the live-fingerprint template's agent identity and system prompt, replaces `body.tools` from the template, and sets fingerprint headers (`user-agent: claude-cli/X.Y.Z (external, cli)`, `x-anthropic-billing-header`, `anthropic-beta`). Failsafe: any internal error falls through to the original fetch — the shim cannot break the host process.
+- **`src/shim/host.ts`** — dario-side spawn host. Stands up a unix domain socket (or named pipe on Windows), spawns the user's command with the shim require'd in via `NODE_OPTIONS`, listens for newline-delimited JSON billing relay events from the runtime, and feeds them into the existing `Analytics` class so they show up in `/analytics`-style summaries (request counts and claim distribution; token costs are not recorded by the shim transport because that would require parsing SSE bodies in the child, which is the kind of cost-and-complexity we explicitly chose to avoid).
+- **`src/cli.ts`** — new `dario shim [-v] -- <command> [args...]` subcommand. Pass-through stdio, propagates the child's exit code, optional verbose log of relay events at the end. Example: `dario shim -- claude --print -p "hi"`.
+- **`src/shim/runtime.cjs` is copied into `dist/shim/`** by the build script (alongside the existing `cc-template-data.json` copy). The host module's `locateShimRuntime()` checks both `dist/shim/runtime.cjs` (production) and `src/shim/runtime.cjs` (dev under tsx).
+- **`test/shim-runtime.mjs`** — 26 unit assertions covering the URL gate (literal `anthropic.com` host, suffix-attack rejection, localhost passthrough), the method gate (POST-only), the body rewriter (billing tag preserved, agent identity replaced, system prompt replaced, cache control preserved, tools replaced, messages untouched, model untouched, null on garbage), and the header rewriter (user-agent, billing header, anthropic-beta, existing headers preserved).
+- **`test/shim-e2e.mjs`** — 15 cross-process assertions. Spawns a real `node -e` child with the shim CJS require'd in, hits a local HTTP server pretending to be `api.anthropic.com`, and verifies on the wire that the body was rewritten (billing tag preserved, identity/prompt/tools replaced) and that the header rewrite landed (`user-agent: claude-cli/9.9.9-e2e (external, cli)`). Also covers the relay socket transport: child writes a newline-delimited JSON event to the unix socket, host parses it, billing claim is round-tripped end-to-end.
+
+Total test footprint: 241 assertions across 10 files (was 200 across 8). Full `npm test` green.
+
+#### Deferred to v3.12.x / v3.13
+
+- Auto-detect Bun in the child and refuse with a clear error (Bun's `--require` semantics differ; needs verification before claiming support).
+- `dario shim --replace claude` global wrapper install (drop a `claude` shim into PATH that re-execs into `dario shim -- /path/to/real/claude`).
+- Token cost recording (would require the runtime to parse SSE bodies in-flight; intentionally not in v3.12.0).
+- Windows named-pipe coverage in CI (host code paths exist; CI matrix doesn't currently exercise them).
+- README section and `--help` example walkthrough.
+
+---
+
 ## [3.11.1] - 2026-04-15
 
 ### Added — Billing bucket visibility (#34)

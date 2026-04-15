@@ -386,6 +386,8 @@ async function help() {
     dario backend add NAME --key=sk-... [--base-url=...]
                              Add an OpenAI-compat backend (OpenAI, OpenRouter, Groq, etc.)
     dario backend remove N   Remove an OpenAI-compat backend
+    dario shim -- CMD ARGS   Run CMD inside the dario shim (experimental,
+                             stealth fingerprint via in-process fetch patch)
 
   Proxy options:
     --model=MODEL            Force a model for all requests
@@ -423,6 +425,54 @@ async function help() {
 `);
 }
 
+async function shim() {
+  // dario shim -- <command> [args...]
+  // The `--` separator is conventional but optional; if the user omits it
+  // we just pass everything after `shim` through to the child.
+  const rest = args.slice(1);
+  const sepIdx = rest.indexOf('--');
+  let verbose = false;
+  let head: string[];
+  let childArgs: string[];
+  if (sepIdx >= 0) {
+    head = rest.slice(0, sepIdx);
+    childArgs = rest.slice(sepIdx + 1);
+  } else {
+    head = [];
+    childArgs = rest;
+  }
+  for (const flag of head) {
+    if (flag === '-v' || flag === '--verbose') verbose = true;
+    else {
+      console.error(`Unknown shim flag: ${flag}`);
+      process.exit(1);
+    }
+  }
+  if (childArgs.length === 0) {
+    console.error('Usage: dario shim [-v] -- <command> [args...]');
+    console.error('Example: dario shim -- claude --print -p "hi"');
+    process.exit(1);
+  }
+
+  const { runShim } = await import('./shim/host.js');
+  try {
+    const result = await runShim({
+      command: childArgs[0]!,
+      args: childArgs.slice(1),
+      verbose,
+    });
+    if (verbose) {
+      const summary = result.analytics.summary(60);
+      console.error(`[dario shim] ${result.events.length} relay events, ` +
+        `subscriptionPercent=${summary.window.subscriptionPercent}%`);
+    }
+    process.exit(result.exitCode);
+  } catch (err) {
+    console.error('shim failed:', sanitizeError(err));
+    process.exit(1);
+  }
+}
+
 async function version() {
   try {
     const { fileURLToPath } = await import('node:url');
@@ -444,6 +494,7 @@ const commands: Record<string, () => Promise<void>> = {
   logout,
   accounts,
   backend,
+  shim,
   help,
   version,
   '--help': help,
