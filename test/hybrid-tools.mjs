@@ -407,6 +407,103 @@ header('dario#37 — exec wins over process on CC Bash reverse slot');
 }
 
 // ======================================================================
+//  dario#37 (Glob half) — unmapped fallback must never claim a reverse slot.
+// ======================================================================
+//
+// Original report (tetsuco, OpenClaw, v3.9.3):
+//   Glob: { "pattern": "/tmp/*" } → {"tool":"image","error":"image required"}
+//
+// OpenClaw declares an `image` tool that's not in TOOL_MAP. Default mode
+// round-robins it onto a CC fallback tool. The note in the input shape is
+// the smoking gun: the input is `{pattern: "/tmp/*"}` — a Glob shape — but
+// the output complains the `image` tool got the wrong arguments. So the
+// model was calling Glob (a real CC tool that's always in CC_TOOL_DEFINITIONS),
+// the upstream returned a Glob tool_use, and dario's reverse path rewrote
+// the name to `image` because the unmapped fallback for `image` happened
+// to land on Glob's slot in the reverse lookup.
+//
+// Fix: any mapping with reverseScore: 0 is excluded from the reverse map
+// entirely. Unmapped fallbacks now have reverseScore: 0, so a real Glob
+// tool_use with no legitimate mapping passes through unchanged (name stays
+// "Glob"), and the client either handles it cleanly or rejects it cleanly
+// — but no infinite loop where the model thinks it called Glob and the
+// client thinks it received an image call.
+header('dario#37 (Glob) — unmapped `image` cannot steal Glob reverse slot');
+{
+  // Force `image` onto Glob by padding earlier round-robin slots. With
+  // CC_FALLBACK_TOOLS = [Bash, Read, Grep, Glob, ...] and three unmapped
+  // padding tools claiming Bash/Read/Grep, the fourth unmapped tool lands
+  // on Glob. No legitimate Glob mapping is declared — this matches the
+  // original OpenClaw repro.
+  const body = {
+    model: 'claude-sonnet-4-6',
+    messages: [{ role: 'user', content: 'list /tmp' }],
+    tools: [
+      { name: 'unmapped_a', description: 'x', input_schema: { type: 'object', properties: {} } },
+      { name: 'unmapped_b', description: 'x', input_schema: { type: 'object', properties: {} } },
+      { name: 'unmapped_c', description: 'x', input_schema: { type: 'object', properties: {} } },
+      { name: 'image', description: 'render an image', input_schema: { type: 'object', properties: { prompt: { type: 'string' } } } },
+    ],
+  };
+  const built = buildCCRequest(
+    JSON.parse(JSON.stringify(body)),
+    'billing',
+    { type: 'ephemeral', ttl: '1h' },
+    { deviceId: 'd', accountUuid: 'a', sessionId: 's' },
+    {},
+  );
+  // Test premise: `image` actually landed on Glob via round-robin. If the
+  // distribution algorithm ever changes, fail loud rather than silently.
+  check('test premise: `image` is round-robin\'d onto Glob', built.toolMap.get('image')?.ccTool === 'Glob');
+
+  // The model emits a real Glob tool_use (Glob is in CC_TOOL_DEFINITIONS).
+  const upstream = JSON.stringify({
+    content: [{ type: 'tool_use', id: 't1', name: 'Glob', input: { pattern: '/tmp/*' } }],
+  });
+  const remapped = JSON.parse(reverseMapResponse(upstream, built.toolMap));
+  const block = remapped.content[0];
+  // Pre-fix: block.name === 'image' (the bug). Post-fix: block.name stays
+  // 'Glob' so the client sees an honest unhandled-tool case instead of
+  // routing through `image` with the wrong input shape.
+  check('Glob tool_use is NOT rewritten to `image`', block.name !== 'image');
+  check('Glob tool_use passes through with original name', block.name === 'Glob');
+  check('input is preserved unchanged', block.input.pattern === '/tmp/*');
+}
+
+// Same scenario but a legitimate Glob mapping (`find_files`) is also
+// declared. The legitimate mapping must claim the reverse slot, and the
+// unmapped `image` must not interfere even though both forward to Glob.
+// Note: when `find_files` is mapped, Glob is already in claimedCC, so the
+// round-robin pool excludes Glob and `image` lands on a different fallback.
+// This test verifies that path is also clean.
+{
+  const body = {
+    model: 'claude-sonnet-4-6',
+    messages: [{ role: 'user', content: 'find python files' }],
+    tools: [
+      { name: 'find_files', description: 'glob for files', input_schema: { type: 'object', properties: { pattern: { type: 'string' } } } },
+      { name: 'image', description: 'render an image', input_schema: { type: 'object', properties: { prompt: { type: 'string' } } } },
+    ],
+  };
+  const built = buildCCRequest(
+    JSON.parse(JSON.stringify(body)),
+    'billing',
+    { type: 'ephemeral', ttl: '1h' },
+    { deviceId: 'd', accountUuid: 'a', sessionId: 's' },
+    {},
+  );
+  check('find_files is the legitimate Glob mapping', built.toolMap.get('find_files')?.ccTool === 'Glob');
+  check('image is NOT round-robin\'d onto Glob (Glob already claimed)', built.toolMap.get('image')?.ccTool !== 'Glob');
+
+  const upstream = JSON.stringify({
+    content: [{ type: 'tool_use', id: 't1', name: 'Glob', input: { pattern: '**/*.py' } }],
+  });
+  const remapped = JSON.parse(reverseMapResponse(upstream, built.toolMap));
+  check('Glob reverse routes to legitimate `find_files`', remapped.content[0].name === 'find_files');
+  check('input pattern preserved', remapped.content[0].input.pattern === '**/*.py');
+}
+
+// ======================================================================
 //
 // ======================================================================
 header('dario#36 — drop trailing assistant/empty turns (prefill rejection)');

@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.12.1] - 2026-04-15
+
+### Fixed
+
+- **`src/cc-template.ts`** — tool dispatcher regression (#37 Glob half, also #36). When a client declared an unmapped tool that round-robin'd onto a CC fallback tool Anthropic also emits directly (Glob in the OpenClaw `image` / `memory_get` repros), the reverse lookup routed real upstream tool_use blocks back to the unmapped client tool with the wrong input shape — which then failed the client's own input validation (`{"tool":"image","error":"image required"}`) and could trigger a runaway loop if the client retried. Unmapped-fallback mappings now carry `reverseScore: 0`, and `buildReverseLookup` skips any mapping with score 0 entirely. If no legitimate mapping claims a CC tool, the upstream tool_use passes through unchanged — the client sees an honest unhandled-tool case instead of a corrupted-shape masquerade.
+
+  Bash-half fix from v3.10.3 (process/exec collision on Bash) is unchanged and still covered; the new logic generalizes the same "unmapped fallback must lose reverse collisions" principle to every CC fallback slot, not just Bash.
+
+- **`test/hybrid-tools.mjs`** — 4 new assertions covering the Glob-half repro directly (unmapped `image` round-robin'd onto Glob, real Glob tool_use passes through with name preserved and input intact) plus a legitimate-mapping-wins case (`find_files` + `image` sharing Glob's slot, legitimate mapping claims the reverse path).
+
+### Why this release
+
+@tetsuco's #37 and `boeingchoco`'s #36 both reported the same OpenClaw symptom: Bash tool calls returning "Unknown action" and Glob tool calls misrouting to `memory_get` / `image` with validation errors. v3.10.3's `reverseScore: 1` on `process` closed the Bash half. The Glob half stayed open because the pre-fix round-robin fallback didn't distinguish forward-only distribution from reverse-path claiming — both used the same `ToolMapping` shape and both competed for the reverse slot at the same score. v3.12.1 draws that line explicitly.
+
+---
+
 ## [3.12.0] - 2026-04-15
 
 ### Added — Shim mode (experimental, opt-in)

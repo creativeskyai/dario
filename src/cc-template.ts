@@ -459,6 +459,14 @@ export function buildCCRequest(
             default: return a;
           }
         },
+        // Unmapped-fallback mappings must always lose the reverse-lookup
+        // collision to any legitimate mapping that targets the same CC tool.
+        // Otherwise a client that declares both an unmapped tool (e.g.
+        // OpenClaw's `image`) round-robin'd onto Glob AND a real `glob` /
+        // `find_files` / `list_files` mapping can have the reverse path
+        // route real Glob tool_use blocks back to `image`, which then fails
+        // its own input validation ("image required"). dario#37, Glob half.
+        reverseScore: 0,
       });
     }
   }
@@ -635,10 +643,16 @@ function buildReverseLookup(toolMap: Map<string, ToolMapping>): Map<string, { cl
     }
   }
   // Score-based collision resolution in the non-identity pass.
+  // reverseScore: 0 means "never claim a reverse slot at all" — used for
+  // unmapped-fallback mappings whose forward path exists for round-robin
+  // distribution but whose reverse path would corrupt real CC tool calls
+  // (e.g. routing a real Glob tool_use back to an unmapped `image` client
+  // tool with the wrong input shape, dario#37 Glob half).
   const scoreOf = (m: ToolMapping): number => m.reverseScore ?? 10;
   for (const [clientName, mapping] of toolMap) {
     if (clientName.toLowerCase() === mapping.ccTool.toLowerCase()) continue;
     if (identityClaimed.has(mapping.ccTool)) continue;
+    if (scoreOf(mapping) === 0) continue;
     const existing = reverseMap.get(mapping.ccTool);
     if (!existing || scoreOf(mapping) > scoreOf(existing.mapping)) {
       reverseMap.set(mapping.ccTool, { clientName, mapping });
