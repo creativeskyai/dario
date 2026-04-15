@@ -53,7 +53,21 @@ export function scrubFrameworkIdentifiers(text: string): string {
   let result = text;
   for (const pattern of FRAMEWORK_PATTERNS) {
     pattern.lastIndex = 0;
-    result = result.replace(pattern, '');
+    result = result.replace(pattern, (match, ...args) => {
+      const offset = args[args.length - 2] as number;
+      const src = args[args.length - 1] as string;
+      const before = offset > 0 ? src[offset - 1] : '';
+      const after = offset + match.length < src.length ? src[offset + match.length] : '';
+      // Preserve matches embedded in filesystem paths or URLs. `\b` word
+      // boundaries fire between `.` / `/` and word chars, which made
+      // `/Users/foo/.openclaw/workspace/` collapse to `/Users/foo/./workspace/`
+      // (dario#35). A preceding `.`, `/`, `\`, `-`, or `_` or a following
+      // `/` or `\` is a strong signal the identifier is part of a path or
+      // slug, not prose — leave it alone.
+      if (before === '.' || before === '/' || before === '\\' || before === '-' || before === '_') return match;
+      if (after === '/' || after === '\\') return match;
+      return '';
+    });
   }
   return result;
 }

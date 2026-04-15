@@ -2,6 +2,29 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.9.3] - 2026-04-14
+
+Fixes [#35](https://github.com/askalf/dario/issues/35) reported by [@tetsuco](https://github.com/tetsuco) — `scrubFrameworkIdentifiers` was corrupting filesystem paths that contained a framework name. `/Users/foo/.openclaw/workspace/` was being rewritten to `/Users/foo/./workspace/` because the `\b` word boundary in the identifier regexes fired between `.` and `o`, so the scrub treated the path segment as prose.
+
+### Fixed
+
+- **`scrubFrameworkIdentifiers` now skips matches embedded in path or URL contexts** (`src/cc-template.ts`). The replacement callback inspects the character immediately before and after each match and preserves the identifier when it's adjacent to `.`, `/`, `\`, `-`, or `_` — strong signals that the token is part of a filesystem path, URL, or slug rather than prose. Standalone prose identifiers ("powered by openclaw", "running openclaw with aider") still scrub as before.
+
+  Affected users: anyone running `--hybrid-tools` (or any CC-template path) with a client whose workspace, config, cache, or log directory contains a framework name — OpenClaw's `~/.openclaw/workspace/` is the reproducer, but `/tmp/aider-cache`, `~/.cursor/settings.json`, and similar paths were all at risk of silent corruption on the upstream request.
+
+### Added
+
+- **`test/scrub-paths.mjs`** — 11 assertions covering the path-preservation fix: unix hidden dirs, Windows paths, tilde-expanded paths, URL hosts, aider/cursor path segments, plus prose-scrubbing baselines and mixed path/prose cases. Wired into `npm test`.
+
+### Not changed
+
+- **The FRAMEWORK_PATTERNS list itself** — same identifiers, same order, same `\b` boundaries. Only the replacement strategy changed.
+- **System prompt scrubbing semantics** — `CC_SYSTEM_PROMPT` merge, billing header, tool request fingerprint: all unchanged.
+
+### Credit
+
+[@tetsuco](https://github.com/tetsuco) — precise reproducer with the before/after path, OS, node, and dario version. Took under five minutes from issue read to root cause. Thanks for the clean report.
+
 ## [3.9.2] - 2026-04-14
 
 Docs-only: tighten three `dario help` flag entries for consistency.
