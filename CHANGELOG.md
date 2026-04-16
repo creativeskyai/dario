@@ -2,6 +2,35 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.18.0] - 2026-04-16
+
+### Fixed — Tool-schema contract audit (dario#43)
+
+An audit of `TOOL_MAP` against CC's live `input_schema` definitions surfaced three entries that produced shapes Anthropic's schema validator would reject before the model ever saw them. Each one looked fine in isolation and had zero test coverage, so they failed only in production with clients that exercised those paths.
+
+- **WebFetch requires `prompt` (eight entries).** `web_fetch`, `webfetch`, `fetch`, `browse`, `read_url_content` (Windsurf), `web_extract` (Hermes), `fetch_webpage` (Copilot), and `browser` all produced `{url}` only. CC's WebFetch schema marks both `url` and `prompt` as required (`required: ["url", "prompt"]` in `cc-template-data.json`). A new `webFetchArgs(url, clientPrompt?)` helper injects a generic extraction prompt when the client omits one, and promotes client-side intent fields (Copilot's `query`, Hermes' `prompt`) into the CC slot when present. No API change.
+- **`message`, `ask_followup_question` (Cline/Roo), `clarify` (Hermes) → AskUserQuestion.** All three produced `{question: "..."}`. CC's AskUserQuestion requires a structured `{questions: [{question, options: [{label, description?}], header?, multiSelect?}]}` with `minItems: 2` on options. Synthesizing fake yes/no options would misrepresent what the client's agent actually asked and mislead the model about the user's real choices. The mappings are dropped. Clients that need ask-user flows should use `--preserve-tools` so their real schema flows through untouched.
+- **`notebook_read` → NotebookEdit.** NotebookEdit requires `new_source`; the old mapping supplied only `notebook_path`. Because CC has no notebook-read tool, no valid 1:1 mapping exists — a synthesized empty `new_source` with `edit_mode: 'replace'` would be silently destructive (overwrite a cell with empty content). Dropped. Clients that need it should use `--preserve-tools`.
+
+### Added
+
+- **`create_file` → Write (Copilot).** Previously round-robin'd to a fallback; now a direct map.
+- **`str_replace_editor` limitation documented.** Only the `str_replace` discriminator is translatable into CC's Edit. The `view`, `create`, `insert`, and `undo_edit` commands don't have clean 1:1 maps (view → Read, create → Write, insert → Edit with different semantics) and would silently produce empty old/new string pairs. Comment updated to point users at `--preserve-tools` for non-str_replace flows.
+- **Schema-contract regression test (`test/tool-schema-contract.mjs`).** 129 assertions. Declares one client tool per known TOOL_MAP key, runs `buildCCRequest` to get the resolved toolMap, and validates every `translateArgs` output against the corresponding CC tool's live `input_schema` from `cc-template-data.json`. Catches:
+  - Missing required fields (the dario#43 WebFetch + AskUserQuestion class).
+  - Type mismatches (string-where-array, etc).
+  - `minItems` violations on array fields.
+  - Dropped mappings re-appearing: the four intentionally-unmapped client tool names (`message`, `ask_followup_question`, `clarify`, `notebook_read`) are asserted to land in `unmappedTools` — re-adding them without fixing the shape fails the test loudly.
+  - Missing test samples: a new entry added to TOOL_MAP without a sample in the test fails with "no test sample defined."
+
+Total test footprint: **~640 assertions across 20 files** (was ~511 across 19). Full `npm test` green.
+
+### Why this release
+
+v3.17 closed the environmental flakiness gaps — disk, network, upstream binary drift. v3.18 closes the contract gap between dario's client-facing tool map and Anthropic's server-side schema validator. Three of these bugs had been in the code for months but failed silently: the client's `tool_use` got routed correctly on dario's side, then Anthropic rejected the translated shape before the model saw it, producing a 400 that looked like a client error to the user and an Anthropic error to the server logs — with dario invisible in both. The new contract test runs entirely in-process from the bundled template, so it catches the whole class of "dario built a shape CC doesn't accept" regressions at `npm test` time instead of at user-bug-report time.
+
+---
+
 ## [3.17.0] - 2026-04-16
 
 ### Added — Robustness pass: drift detection, compat matrix, doctor command, atomic cache, OAuth single-flight, corruption recovery, streaming audit

@@ -22,7 +22,7 @@ One command, one local URL, every provider behind it. Point `ANTHROPIC_BASE_URL`
 - `llama-3.3-70b`, `deepseek-v3`, anything else → **Groq**, **OpenRouter**, **local LiteLLM**, **vLLM**, **Ollama**, whichever OpenAI-compat backend you wired up
 - Force a backend explicitly with a prefix: `openai:gpt-4o`, `groq:llama-3.3-70b`, `local:qwen-coder`, `claude:opus`
 
-Switching providers is a **model-name change** in your tool. Not a reconfigure. Not new base URLs. Not new API keys. Not a new SDK import. **Zero runtime dependencies. ~7,600 lines of TypeScript across ~15 files. ~511 assertions across 19 test suites. [SLSA-attested](https://www.npmjs.com/package/@askalf/dario) on every release. Nothing phones home, ever.**
+Switching providers is a **model-name change** in your tool. Not a reconfigure. Not new base URLs. Not new API keys. Not a new SDK import. **Zero runtime dependencies. ~7,600 lines of TypeScript across ~15 files. ~640 assertions across 20 test suites. [SLSA-attested](https://www.npmjs.com/package/@askalf/dario) on every release. Nothing phones home, ever.**
 
 ---
 
@@ -266,7 +266,7 @@ Under the hood: `dario shim` spawns the child with `NODE_OPTIONS=--require <dari
 
 ## Agent compatibility
 
-As of **v3.15**, dario's built-in `TOOL_MAP` has **71 entries** covering the tool schemas of every major coding agent. On the Claude backend, tool calls translate to CC's native `Bash / Read / Write / Edit / Glob / Grep / WebSearch / WebFetch` on the outbound path (keeping the subscription fingerprint intact) and rebuild to your agent's exact expected shape on the inbound path (so your validator is happy). No flag required.
+As of **v3.18**, dario's built-in `TOOL_MAP` carries **~65 schema-verified entries** covering the tool schemas of every major coding agent. On the Claude backend, tool calls translate to CC's native `Bash / Read / Write / Edit / Glob / Grep / WebSearch / WebFetch` on the outbound path (keeping the subscription fingerprint intact) and rebuild to your agent's exact expected shape on the inbound path (so your validator is happy). No flag required.
 
 | Agent | Covered tool names (subset) |
 |---|---|
@@ -512,7 +512,7 @@ Dario handles your OAuth tokens and API keys locally. Here's why you can trust i
 | **Dependencies** | 0 runtime dependencies. Verify: `npm ls --production` |
 | **npm provenance** | Every release is [SLSA-attested](https://www.npmjs.com/package/@askalf/dario) via GitHub Actions with sigstore provenance attached to the transparency log |
 | **Security scanning** | [CodeQL](https://github.com/askalf/dario/actions/workflows/codeql.yml) runs on every push and weekly |
-| **Test footprint** | ~511 assertions across 19 files. Full `npm test` green on every release |
+| **Test footprint** | ~640 assertions across 20 files. Full `npm test` green on every release |
 | **Credential handling** | Tokens and API keys never logged, redacted from errors, stored with `0600` permissions |
 | **OAuth flow** | PKCE (Proof Key for Code Exchange), no client secret |
 | **Network scope** | Binds to `127.0.0.1` by default. `--host` allows LAN/mesh with `DARIO_API_KEY` gating. Upstream traffic goes only to the configured backend target URLs over HTTPS |
@@ -615,7 +615,7 @@ PRs welcome. The codebase is small TypeScript — ~7,600 lines across ~15 files:
 | File | Purpose |
 |---|---|
 | `src/proxy.ts` | HTTP proxy server, request handler, rate governor, Claude backend dispatch, OpenAI-compat routing, pool failover |
-| `src/cc-template.ts` | CC request template engine, universal `TOOL_MAP` (71 entries), orchestration and framework scrubbing, header-order replay |
+| `src/cc-template.ts` | CC request template engine, universal `TOOL_MAP` (~65 schema-verified entries), orchestration and framework scrubbing, header-order replay |
 | `src/cc-template-data.json` | Bundled fallback CC request template (used when live-fingerprint extraction isn't possible) |
 | `src/cc-oauth-detect.ts` | OAuth config auto-detection from the installed CC binary |
 | `src/live-fingerprint.ts` | Live extraction of the CC request template (system prompt, tools, user-agent, beta flags, header order) from the installed Claude Code binary, drift detection, compat matrix, atomic cache writes, corruption recovery |
@@ -636,7 +636,7 @@ git clone https://github.com/askalf/dario
 cd dario
 npm install
 npm run dev   # runs with tsx, no build step
-npm test      # ~511 assertions across 19 suites
+npm test      # ~640 assertions across 20 suites
 npm run e2e   # live proxy + OAuth (requires a working Claude backend)
 ```
 

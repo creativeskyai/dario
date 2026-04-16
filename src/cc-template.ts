@@ -221,6 +221,28 @@ function injectContextFields(
   return input;
 }
 
+/**
+ * Default prompt injected into WebFetch calls when the client omits one.
+ * CC's WebFetch input_schema marks both {url, prompt} as required, but
+ * fetch-style client tools (Cline `browse`, Copilot `fetch_webpage` sans
+ * query, OpenClaw `fetch`, etc.) typically ship only a URL. Without a
+ * synthesized prompt the upstream request is rejected by schema
+ * validation before the model ever sees it (dario#43).
+ */
+const WEBFETCH_DEFAULT_PROMPT = 'Extract and return the main content of this page.';
+
+/**
+ * Build WebFetch args from a client URL + optional client-side prompt-like
+ * field. Clients that carry intent (Copilot's `query`, Hermes' `prompt`)
+ * pass it through; everyone else gets the generic extraction prompt.
+ */
+function webFetchArgs(url: unknown, clientPrompt?: unknown): Record<string, unknown> {
+  const prompt = typeof clientPrompt === 'string' && clientPrompt.trim() !== ''
+    ? clientPrompt
+    : WEBFETCH_DEFAULT_PROMPT;
+  return { url: String(url || ''), prompt };
+}
+
 const TOOL_MAP: Record<string, ToolMapping> = {
   // Direct maps
   // Note on translateBack field names: the vast majority of client bash-like
@@ -358,6 +380,12 @@ const TOOL_MAP: Record<string, ToolMapping> = {
     translateArgs: (a) => ({ file_path: a.path || '', content: a.content || '' }),
     translateBack: (a) => ({ path: a.file_path ?? '', content: a.content ?? '' }),
   },
+  // Copilot
+  create_file: {
+    ccTool: 'Write',
+    translateArgs: (a) => ({ file_path: a.filePath || a.file_path || a.path || '', content: a.content || '' }),
+    translateBack: (a) => ({ filePath: a.file_path ?? '', content: a.content ?? '' }),
+  },
   edit: {
     ccTool: 'Edit',
     translateArgs: (a) => ({ file_path: a.filePath || a.path || a.file_path || '', old_string: a.oldString || a.old || a.old_string || '', new_string: a.newString || a.new || a.new_string || '' }),
@@ -399,7 +427,12 @@ const TOOL_MAP: Record<string, ToolMapping> = {
     translateArgs: (a) => ({ file_path: a.filePath || a.file_path || '', old_string: a.old_string || '', new_string: a.code || a.new_string || '' }),
     translateBack: (a) => ({ filePath: a.file_path ?? '', code: a.new_string ?? '', explanation: '' }),
   },
-  // OpenHands
+  // OpenHands — only the `str_replace` discriminator is translatable; `view`,
+  // `create`, `insert`, `undo_edit` commands don't fit a 1:1 map into CC's Edit
+  // (view→Read, create→Write, insert→Edit-with-different-semantics) and would
+  // silently produce empty old_string/new_string pairs that CC's Edit tool
+  // rejects. Use --preserve-tools if your OpenHands flow relies on non-
+  // str_replace commands (dario#43).
   str_replace_editor: {
     ccTool: 'Edit',
     translateArgs: (a) => ({ file_path: a.path || '', old_string: a.old_str || '', new_string: a.new_str || '' }),
@@ -503,40 +536,41 @@ const TOOL_MAP: Record<string, ToolMapping> = {
   },
   web_fetch: {
     ccTool: 'WebFetch',
-    translateArgs: (a) => ({ url: a.url || a.u || '' }),
+    translateArgs: (a) => webFetchArgs(a.url || a.u, a.prompt),
     translateBack: (a) => ({ url: a.url ?? '' }),
   },
   webfetch: {
     ccTool: 'WebFetch',
-    translateArgs: (a) => ({ url: a.url || a.u || '' }),
+    translateArgs: (a) => webFetchArgs(a.url || a.u, a.prompt),
     translateBack: (a) => ({ url: a.url ?? '' }),
   },
   fetch: {
     ccTool: 'WebFetch',
-    translateArgs: (a) => ({ url: a.url || '' }),
+    translateArgs: (a) => webFetchArgs(a.url, a.prompt),
     translateBack: (a) => ({ url: a.url ?? '' }),
   },
   browse: {
     ccTool: 'WebFetch',
-    translateArgs: (a) => ({ url: a.url || '' }),
+    translateArgs: (a) => webFetchArgs(a.url, a.prompt),
     translateBack: (a) => ({ url: a.url ?? '' }),
   },
   // Windsurf
   read_url_content: {
     ccTool: 'WebFetch',
-    translateArgs: (a) => ({ url: a.Url || a.url || '' }),
+    translateArgs: (a) => webFetchArgs(a.Url || a.url, a.prompt),
     translateBack: (a) => ({ Url: a.url ?? '', url: a.url ?? '' }),
   },
   // Hermes — web_extract takes {urls: [...]} but we map the first URL
   web_extract: {
     ccTool: 'WebFetch',
-    translateArgs: (a) => ({ url: Array.isArray(a.urls) ? String(a.urls[0] || '') : a.url || '' }),
+    translateArgs: (a) => webFetchArgs(Array.isArray(a.urls) ? a.urls[0] : a.url, a.prompt),
     translateBack: (a) => ({ urls: [a.url ?? ''] }),
   },
-  // Copilot
+  // Copilot — fetch_webpage carries an intent field as `query`; promote
+  // it to WebFetch's prompt so upstream sees what the client wanted.
   fetch_webpage: {
     ccTool: 'WebFetch',
-    translateArgs: (a) => ({ url: a.url || '' }),
+    translateArgs: (a) => webFetchArgs(a.url, a.query || a.prompt),
     translateBack: (a) => ({ url: a.url ?? '' }),
   },
   // Windsurf
@@ -556,26 +590,21 @@ const TOOL_MAP: Record<string, ToolMapping> = {
   // Additional client tool mappings
   browser: {
     ccTool: 'WebFetch',
-    translateArgs: (a) => ({ url: String(a.url || '') }),
+    translateArgs: (a) => webFetchArgs(a.url, a.prompt),
     translateBack: (a) => ({ url: a.url ?? '' }),
   },
-  message: {
-    ccTool: 'AskUserQuestion',
-    translateArgs: (a) => ({ question: String(a.message || a.content || '') }),
-    translateBack: (a) => ({ message: a.question ?? '' }),
-  },
-  // Cline / Roo Code
-  ask_followup_question: {
-    ccTool: 'AskUserQuestion',
-    translateArgs: (a) => ({ question: String(a.question || '') }),
-    translateBack: (a) => ({ question: a.question ?? '' }),
-  },
-  // Hermes
-  clarify: {
-    ccTool: 'AskUserQuestion',
-    translateArgs: (a) => ({ question: String(a.question || '') }),
-    translateBack: (a) => ({ question: a.question ?? '' }),
-  },
+  // Intentionally unmapped (dario#43): the `message`, `ask_followup_question`
+  // (Cline/Roo), and `clarify` (Hermes) tools are free-form "ask the user one
+  // question" shapes. CC's AskUserQuestion requires a structured
+  // `{questions: [{question, options: [min 2]}]}` shape with multi-option
+  // answers — synthesizing fake yes/no options would distort what the client's
+  // agent actually asked and mislead the model about the user's real choices.
+  // Falling through to unmapped-tool handling is strictly more honest:
+  //   • default mode → round-robin to a fallback CC tool (lossy but upstream
+  //     won't reject the request);
+  //   • hybrid mode → dropped, so the model doesn't see a broken tool;
+  //   • --preserve-tools → client's real schema flows through untouched
+  //     (recommended for agents that depend on ask-user flows).
   todo_read: {
     ccTool: 'TodoWrite',
     translateArgs: () => ({ todos: [] }),
@@ -586,11 +615,10 @@ const TOOL_MAP: Record<string, ToolMapping> = {
     translateArgs: (a) => ({ todos: a.todos || [] }),
     translateBack: (a) => ({ todos: a.todos ?? [] }),
   },
-  notebook_read: {
-    ccTool: 'NotebookEdit',
-    translateArgs: (a) => ({ notebook_path: String(a.notebook_path || a.path || '') }),
-    translateBack: (a) => ({ notebook_path: a.notebook_path ?? '' }),
-  },
+  // Intentionally unmapped (dario#43): CC has no notebook-read tool, and
+  // routing a read to NotebookEdit with empty new_source either fails the
+  // schema (`new_source` required) or executes a destructive no-op edit.
+  // Clients with notebook-read should use --preserve-tools.
   enter_plan_mode: { ccTool: 'EnterPlanMode' },
   exit_plan_mode: { ccTool: 'ExitPlanMode' },
   enter_worktree: {
