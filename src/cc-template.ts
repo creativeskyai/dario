@@ -241,6 +241,8 @@ const TOOL_MAP: Record<string, ToolMapping> = {
     translateArgs: (a) => ({ command: a.command || '' }),
     translateBack: (a) => ({ command: a.command ?? '', is_input: 'false', security_risk: 'LOW' }),
   },
+  // Note: Hermes `terminal` tool uses the same {command} shape — covered
+  // by the `terminal` entry above.
   process: {
     ccTool: 'Bash',
     translateArgs: (a) => ({ command: a.action || a.cmd || '' }),
@@ -337,6 +339,12 @@ const TOOL_MAP: Record<string, ToolMapping> = {
     ccTool: 'Edit',
     translateArgs: (a) => ({ file_path: a.path || '', old_string: a.old_str || '', new_string: a.new_str || '' }),
     translateBack: (a) => ({ command: 'str_replace', path: a.file_path ?? '', old_str: a.old_string ?? '', new_str: a.new_string ?? '', security_risk: 'LOW' }),
+  },
+  // Hermes — `patch` tool in "replace" mode maps to Edit
+  patch: {
+    ccTool: 'Edit',
+    translateArgs: (a) => ({ file_path: a.path || '', old_string: a.old_string || '', new_string: a.new_string || '' }),
+    translateBack: (a) => ({ mode: 'replace', path: a.file_path ?? '', old_string: a.old_string ?? '', new_string: a.new_string ?? '', replace_all: false }),
   },
   glob: { ccTool: 'Glob' },
   find_files: {
@@ -454,6 +462,12 @@ const TOOL_MAP: Record<string, ToolMapping> = {
     translateArgs: (a) => ({ url: a.Url || a.url || '' }),
     translateBack: (a) => ({ Url: a.url ?? '', url: a.url ?? '' }),
   },
+  // Hermes — web_extract takes {urls: [...]} but we map the first URL
+  web_extract: {
+    ccTool: 'WebFetch',
+    translateArgs: (a) => ({ url: Array.isArray(a.urls) ? String(a.urls[0] || '') : a.url || '' }),
+    translateBack: (a) => ({ urls: [a.url ?? ''] }),
+  },
   // Copilot
   fetch_webpage: {
     ccTool: 'WebFetch',
@@ -487,6 +501,12 @@ const TOOL_MAP: Record<string, ToolMapping> = {
   },
   // Cline / Roo Code
   ask_followup_question: {
+    ccTool: 'AskUserQuestion',
+    translateArgs: (a) => ({ question: String(a.question || '') }),
+    translateBack: (a) => ({ question: a.question ?? '' }),
+  },
+  // Hermes
+  clarify: {
     ccTool: 'AskUserQuestion',
     translateArgs: (a) => ({ question: String(a.question || '') }),
     translateBack: (a) => ({ question: a.question ?? '' }),
