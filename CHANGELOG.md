@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.19.1] - 2026-04-16
+
+### Fixed — Cline reverse-translation shape (dario#40)
+
+Two `translateBack` entries produced inputs that Cline's schema validator rejected, so every CC tool call going to a Cline client showed an error banner in the Cline UI even though the operation eventually succeeded.
+
+- **`execute_command` — `requires_approval` now emitted.** Cline's `execute_command` marks `requires_approval: boolean` as required alongside `command`. Pre-v3.19.1 the reverse map produced `{command, description?}` only, so Cline logged `execute_command without value for required parameter 'requires_approval'`. Default is `false` — CC already gates Bash upstream through its own permission model, and the borrower controls their own auto-approval settings on the Cline side.
+- **`replace_in_file` — `diff` now emitted as a SEARCH/REPLACE block.** Cline's `replace_in_file` takes `{path, diff}` where `diff` is one or more SEARCH/REPLACE blocks in the exact format specified by `cline/cline/src/core/prompts/system-prompt/tools/replace_in_file.ts`. Pre-v3.19.1 the reverse map produced `{path, old_string, new_string}` — valid for Anthropic's Edit tool, not for Cline's `replace_in_file`. Reverse now assembles `------- SEARCH\n<old>\n=======\n<new>\n+++++++ REPLACE` from the Edit input.
+
+Both raw `old_string` / `new_string` fields are removed from the reverse output so Cline doesn't see stray properties.
+
+### Added
+
+- **Regression test for Cline reverse translation (`test/issue-29-tool-translation.mjs` sections 6 and 7).** 17 new assertions covering: `execute_command` emits `requires_approval` as a boolean defaulting to `false`, `command` and `description` forwarded; `replace_in_file` emits a valid `diff` with SEARCH/REPLACE delimiters, the old_string/new_string content survives a regex round-trip from the diff block, and the raw fields are dropped.
+
+Total test footprint: **704 assertions across 20 files** (was 687). Full `npm test` green.
+
 ## [3.19.0] - 2026-04-16
 
 ### Changed — Stealth + robustness pass

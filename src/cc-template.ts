@@ -297,7 +297,10 @@ const TOOL_MAP: Record<string, ToolMapping> = {
   execute_command: {
     ccTool: 'Bash',
     translateArgs: (a) => ({ command: a.command || a.cmd || '', ...(a.description ? { description: a.description } : {}) }),
-    translateBack: (a) => ({ command: a.command ?? '', ...(a.description ? { description: a.description } : { description: a.command ?? '' }) }),
+    // requires_approval is required by Cline's execute_command schema. Default
+    // to false — CC already gates Bash upstream through its own permission
+    // model, and the borrower controls their own auto-approval settings.
+    translateBack: (a) => ({ command: a.command ?? '', requires_approval: false, ...(a.description ? { description: a.description } : { description: a.command ?? '' }) }),
   },
   // Cursor
   run_terminal_cmd: {
@@ -401,7 +404,9 @@ const TOOL_MAP: Record<string, ToolMapping> = {
   replace_in_file: {
     ccTool: 'Edit',
     translateArgs: (a) => ({ file_path: a.path || a.filePath || a.file_path || '', old_string: a.old_string || a.old || '', new_string: a.new_string || a.new || '' }),
-    translateBack: (a) => ({ path: a.file_path ?? '', old_string: a.old_string ?? '', new_string: a.new_string ?? '' }),
+    // Cline's schema requires `diff`, not old_string/new_string — formatted as
+    // one SEARCH/REPLACE block (see replace_in_file.ts in cline/cline).
+    translateBack: (a) => ({ path: a.file_path ?? '', diff: `------- SEARCH\n${a.old_string ?? ''}\n=======\n${a.new_string ?? ''}\n+++++++ REPLACE` }),
   },
   // Roo Code
   apply_diff: {

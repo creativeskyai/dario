@@ -273,6 +273,94 @@ const globBlock = globMapped.content[0];
 check('Glob rewritten to client name (or kept as Glob if identity)', globBlock?.name === 'glob' || globBlock?.name === 'Glob');
 check('glob input passes through untouched (no translateBack)', globBlock?.input?.pattern === '**/*.py');
 
+// ── Test 6: Cline execute_command emits requires_approval (dario#40) ──
+
+header('6. Cline: Bash tool_use → execute_command with requires_approval');
+
+const clineExecClientBody = {
+  ...clientBody,
+  tools: [{
+    name: 'execute_command',
+    description: 'Execute a CLI command',
+    input_schema: {
+      type: 'object',
+      properties: {
+        command: { type: 'string' },
+        requires_approval: { type: 'boolean' },
+      },
+      required: ['command', 'requires_approval'],
+    },
+  }],
+};
+const { toolMap: execToolMap } = buildCCRequest(clineExecClientBody, billingTag, cache1h, identity);
+const execResponse = JSON.stringify({
+  id: 'msg_test',
+  type: 'message',
+  role: 'assistant',
+  content: [{ type: 'tool_use', id: 'toolu_e', name: 'Bash', input: { command: 'ls -la', description: 'list files' } }],
+  stop_reason: 'tool_use',
+});
+const execMapped = JSON.parse(reverseMapResponse(execResponse, execToolMap));
+const execBlock = execMapped.content[0];
+
+check('Bash rewritten to execute_command', execBlock?.name === 'execute_command');
+check('command forwarded', execBlock?.input?.command === 'ls -la');
+check('requires_approval present as boolean', typeof execBlock?.input?.requires_approval === 'boolean');
+check('requires_approval defaults to false', execBlock?.input?.requires_approval === false);
+check('description preserved when provided', execBlock?.input?.description === 'list files');
+
+// ── Test 7: Cline replace_in_file emits diff SEARCH/REPLACE block (dario#40) ──
+
+header('7. Cline: Edit tool_use → replace_in_file with diff block');
+
+const clineReplaceClientBody = {
+  ...clientBody,
+  tools: [{
+    name: 'replace_in_file',
+    description: 'Replace sections via SEARCH/REPLACE blocks',
+    input_schema: {
+      type: 'object',
+      properties: { path: { type: 'string' }, diff: { type: 'string' } },
+      required: ['path', 'diff'],
+    },
+  }],
+};
+const { toolMap: replaceToolMap } = buildCCRequest(clineReplaceClientBody, billingTag, cache1h, identity);
+const replaceResponse = JSON.stringify({
+  id: 'msg_test',
+  type: 'message',
+  role: 'assistant',
+  content: [{
+    type: 'tool_use',
+    id: 'toolu_r',
+    name: 'Edit',
+    input: { file_path: '/tmp/x.ts', old_string: 'const x = 1;', new_string: 'const x = 2;' },
+  }],
+  stop_reason: 'tool_use',
+});
+const replaceMapped = JSON.parse(reverseMapResponse(replaceResponse, replaceToolMap));
+const replaceBlock = replaceMapped.content[0];
+
+check('Edit rewritten to replace_in_file', replaceBlock?.name === 'replace_in_file');
+check('path forwarded', replaceBlock?.input?.path === '/tmp/x.ts');
+check('diff is a string', typeof replaceBlock?.input?.diff === 'string');
+check('diff contains SEARCH header', replaceBlock?.input?.diff?.includes('------- SEARCH'));
+check('diff contains ======= separator', replaceBlock?.input?.diff?.includes('\n=======\n'));
+check('diff contains REPLACE footer', replaceBlock?.input?.diff?.includes('+++++++ REPLACE'));
+check('diff includes the old_string content', replaceBlock?.input?.diff?.includes('const x = 1;'));
+check('diff includes the new_string content', replaceBlock?.input?.diff?.includes('const x = 2;'));
+check('diff does NOT leak raw old_string field', replaceBlock?.input?.old_string === undefined);
+check('diff does NOT leak raw new_string field', replaceBlock?.input?.new_string === undefined);
+
+// Verify the block parses under Cline's spec: SEARCH block between ------- SEARCH
+// and ======= lines contains the old content; REPLACE block between ======= and
+// +++++++ REPLACE lines contains the new content.
+const diffText = replaceBlock?.input?.diff ?? '';
+const searchMatch = diffText.match(/^------- SEARCH\n([\s\S]*?)\n=======/m);
+const replaceMatch = diffText.match(/=======\n([\s\S]*?)\n\+\+\+\+\+\+\+ REPLACE$/m);
+check('SEARCH section extracts old_string exactly', searchMatch?.[1] === 'const x = 1;');
+check('REPLACE section extracts new_string exactly', replaceMatch?.[1] === 'const x = 2;');
+
 // ── Summary ──
 
 console.log(`\n${pass} pass, ${fail} fail\n`);
