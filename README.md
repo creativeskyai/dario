@@ -88,7 +88,7 @@ Something broken? `dario doctor` prints a single aggregated health report — da
 
 **You want the proxy layer off the wire entirely.** **Shim mode** (v3.12, hardened in v3.13) is an in-process `globalThis.fetch` patch injected via `NODE_OPTIONS=--require`. No HTTP hop, no port to bind, no `BASE_URL` to set. `dario shim -- claude --print "hi"` and CC thinks it's talking directly to `api.anthropic.com`. See [Shim mode](#shim-mode).
 
-**You want to share capacity with a trusted group without surveilling each other.** The **sealed-sender overflow protocol** (v3.13) uses RSA blind signatures (Chaum 1983, implemented from scratch over Node's `crypto`) so members of a trust group can lend unused Claude capacity to each other with cryptographic unlinkability. A lender verifies "this is a valid group member" without learning *which* member. See [Sealed-sender overflow](#sealed-sender-overflow-protocol).
+**You want to share capacity with a trusted group without surveilling each other.** The **sealed-sender overflow protocol** (v3.13) uses RSA blind signatures (Chaum 1983, implemented from scratch over Node's `crypto`) so members of a trust group can lend unused Claude capacity to each other with cryptographic unlinkability. A lender verifies "this is a valid group member" without learning *which* member. Dario ships the primitive; [mux](https://github.com/askalf/mux) is the dedicated product around it (group admin, key distribution, member workflow, borrower CLI). See [Sealed-sender overflow](#sealed-sender-overflow-protocol).
 
 **You want to actually audit the thing.** ~7,600 lines of TypeScript across ~15 files. Zero runtime dependencies (`npm ls --production` confirms). Credentials at `~/.dario/` with `0600` permissions. `127.0.0.1`-only by default. Every release [SLSA-attested](https://www.npmjs.com/package/@askalf/dario) via GitHub Actions. Nothing phones home. Small enough to read in a weekend.
 
@@ -231,6 +231,8 @@ Trust-group members can lend each other Claude capacity with **cryptographic unl
 - 85 test assertions in `test/sealed-pool.mjs` covering raw RSA roundtrip, unlinkability, wrong-key / tampered-sig / wrong-group / double-spend rejection, key export/import, admin membership / quota / expiry enforcement, concurrent-borrow double-spend prevention, and end-to-end two-member unlinkability.
 
 Full feature-parity with `/v1/messages` (streaming, inside-request 429 failover, reverse tool mapping) for borrowed requests is intentionally a follow-up — the current release ships the cryptographic primitive and a working minimal endpoint; full integration layers on top.
+
+**Dedicated product.** The sealed-sender protocol has a dedicated product around it: [mux](https://github.com/askalf/mux). mux carries the group admin tooling (key generation, member roster, batch signing), the member workflow (prepare / finalize / status), the borrower CLI, and the lender daemon as a coherent surface. It uses dario as its backend — a mux lender runs a dario pool and fronts it with `/v1/pool/borrow`. Dario keeps the primitive here for anyone who wants to embed it without running the full mux flow; for peer-to-peer capacity sharing as a product, use mux.
 
 ---
 
