@@ -205,6 +205,42 @@ const TOOL_MAP: Record<string, ToolMapping> = {
   // reverse lookup picks the bash-family mapping for CC's Bash tool slot
   // instead of routing CC tool calls through process's action-based shape
   // and breaking every Bash call with "Unknown action" (dario#37).
+  // Cline / Roo Code (#40)
+  execute_command: {
+    ccTool: 'Bash',
+    translateArgs: (a) => ({ command: a.command || a.cmd || '', ...(a.description ? { description: a.description } : {}) }),
+    translateBack: (a) => ({ command: a.command ?? '', ...(a.description ? { description: a.description } : { description: a.command ?? '' }) }),
+  },
+  // Cursor
+  run_terminal_cmd: {
+    ccTool: 'Bash',
+    translateArgs: (a) => ({ command: a.command || '', ...(a.explanation ? { description: a.explanation } : {}) }),
+    translateBack: (a) => ({ command: a.command ?? '', is_background: false, ...(a.description ? { explanation: a.description } : {}) }),
+  },
+  // Windsurf
+  run_command: {
+    ccTool: 'Bash',
+    translateArgs: (a) => ({ command: a.CommandLine || a.command || '' }),
+    translateBack: (a) => ({ CommandLine: a.command ?? '', Blocking: true }),
+  },
+  // Continue.dev
+  builtin_run_terminal_command: {
+    ccTool: 'Bash',
+    translateArgs: (a) => ({ command: a.command || '' }),
+    translateBack: (a) => ({ command: a.command ?? '' }),
+  },
+  // Copilot
+  run_in_terminal: {
+    ccTool: 'Bash',
+    translateArgs: (a) => ({ command: a.command || '', ...(a.explanation ? { description: a.explanation } : {}) }),
+    translateBack: (a) => ({ command: a.command ?? '', ...(a.description ? { explanation: a.description } : {}) }),
+  },
+  // OpenHands
+  execute_bash: {
+    ccTool: 'Bash',
+    translateArgs: (a) => ({ command: a.command || '' }),
+    translateBack: (a) => ({ command: a.command ?? '', is_input: 'false', security_risk: 'LOW' }),
+  },
   process: {
     ccTool: 'Bash',
     translateArgs: (a) => ({ command: a.action || a.cmd || '' }),
@@ -218,8 +254,20 @@ const TOOL_MAP: Record<string, ToolMapping> = {
   },
   read_file: {
     ccTool: 'Read',
-    translateArgs: (a) => ({ file_path: a.filePath || a.path || a.file_path || '' }),
-    translateBack: (a) => ({ path: a.file_path ?? '', filePath: a.file_path ?? '' }),
+    translateArgs: (a) => ({ file_path: a.filePath || a.path || a.file_path || a.target_file || '' }),
+    translateBack: (a) => ({ path: a.file_path ?? '', filePath: a.file_path ?? '', target_file: a.file_path ?? '' }),
+  },
+  // Windsurf
+  view_file: {
+    ccTool: 'Read',
+    translateArgs: (a) => ({ file_path: a.AbsolutePath || a.path || '', ...(a.StartLine ? { offset: a.StartLine } : {}), ...(a.EndLine && a.StartLine ? { limit: Number(a.EndLine) - Number(a.StartLine) + 1 } : {}) }),
+    translateBack: (a) => ({ AbsolutePath: a.file_path ?? '', StartLine: Number(a.offset ?? 1), EndLine: Number(a.offset ?? 1) + Number(a.limit ?? 200) - 1 }),
+  },
+  // Continue.dev
+  builtin_read_file: {
+    ccTool: 'Read',
+    translateArgs: (a) => ({ file_path: a.path || '' }),
+    translateBack: (a) => ({ path: a.file_path ?? '' }),
   },
   write: {
     ccTool: 'Write',
@@ -231,12 +279,65 @@ const TOOL_MAP: Record<string, ToolMapping> = {
     translateArgs: (a) => ({ file_path: a.filePath || a.path || a.file_path || '', content: a.content || '' }),
     translateBack: (a) => ({ path: a.file_path ?? '', filePath: a.file_path ?? '', content: a.content ?? '' }),
   },
+  // Cline / Roo Code / Windsurf (#40)
+  write_to_file: {
+    ccTool: 'Write',
+    translateArgs: (a) => ({ file_path: a.path || a.filePath || a.file_path || a.TargetFile || '', content: a.content || a.CodeContent || '' }),
+    translateBack: (a) => ({ path: a.file_path ?? '', filePath: a.file_path ?? '', content: a.content ?? '', TargetFile: a.file_path ?? '' }),
+  },
+  // Continue.dev
+  builtin_create_new_file: {
+    ccTool: 'Write',
+    translateArgs: (a) => ({ file_path: a.path || '', content: a.content || '' }),
+    translateBack: (a) => ({ path: a.file_path ?? '', content: a.content ?? '' }),
+  },
   edit: {
     ccTool: 'Edit',
     translateArgs: (a) => ({ file_path: a.filePath || a.path || a.file_path || '', old_string: a.oldString || a.old || a.old_string || '', new_string: a.newString || a.new || a.new_string || '' }),
     translateBack: (a) => ({ path: a.file_path ?? '', filePath: a.file_path ?? '', old: a.old_string ?? '', oldString: a.old_string ?? '', new: a.new_string ?? '', newString: a.new_string ?? '' }),
   },
-  edit_file: { ccTool: 'Edit' },
+  edit_file: {
+    ccTool: 'Edit',
+    translateArgs: (a) => ({ file_path: a.file_path || a.path || a.target_file || a.filePath || '', old_string: a.old_string || a.old || a.old_str || '', new_string: a.new_string || a.new || a.new_str || '' }),
+    translateBack: (a) => ({ file_path: a.file_path ?? '', old_string: a.old_string ?? '', new_string: a.new_string ?? '' }),
+  },
+  // Cline / Roo Code (#40)
+  replace_in_file: {
+    ccTool: 'Edit',
+    translateArgs: (a) => ({ file_path: a.path || a.filePath || a.file_path || '', old_string: a.old_string || a.old || '', new_string: a.new_string || a.new || '' }),
+    translateBack: (a) => ({ path: a.file_path ?? '', old_string: a.old_string ?? '', new_string: a.new_string ?? '' }),
+  },
+  // Roo Code
+  apply_diff: {
+    ccTool: 'Edit',
+    translateArgs: (a) => ({ file_path: a.path || a.file_path || '', old_string: a.old_string || '', new_string: a.new_string || '' }),
+    translateBack: (a) => ({ path: a.file_path ?? '', diff: '' }),
+    reverseScore: 1,
+  },
+  // Roo Code / Cursor
+  search_replace: {
+    ccTool: 'Edit',
+    translateArgs: (a) => ({ file_path: a.file_path || a.path || '', old_string: a.old_string || '', new_string: a.new_string || '' }),
+    translateBack: (a) => ({ file_path: a.file_path ?? '', old_string: a.old_string ?? '', new_string: a.new_string ?? '' }),
+  },
+  // Continue.dev
+  builtin_edit_existing_file: {
+    ccTool: 'Edit',
+    translateArgs: (a) => ({ file_path: a.path || '', old_string: a.old_string || '', new_string: a.replacement || a.new_string || '' }),
+    translateBack: (a) => ({ path: a.file_path ?? '', replacement: a.new_string ?? '' }),
+  },
+  // Copilot
+  insert_edit_into_file: {
+    ccTool: 'Edit',
+    translateArgs: (a) => ({ file_path: a.filePath || a.file_path || '', old_string: a.old_string || '', new_string: a.code || a.new_string || '' }),
+    translateBack: (a) => ({ filePath: a.file_path ?? '', code: a.new_string ?? '', explanation: '' }),
+  },
+  // OpenHands
+  str_replace_editor: {
+    ccTool: 'Edit',
+    translateArgs: (a) => ({ file_path: a.path || '', old_string: a.old_str || '', new_string: a.new_str || '' }),
+    translateBack: (a) => ({ command: 'str_replace', path: a.file_path ?? '', old_str: a.old_string ?? '', new_str: a.new_string ?? '', security_risk: 'LOW' }),
+  },
   glob: { ccTool: 'Glob' },
   find_files: {
     ccTool: 'Glob',
@@ -245,8 +346,40 @@ const TOOL_MAP: Record<string, ToolMapping> = {
   },
   list_files: {
     ccTool: 'Glob',
-    translateArgs: (a) => ({ pattern: a.pattern || '*' }),
-    translateBack: (a) => ({ pattern: a.pattern ?? '' }),
+    translateArgs: (a) => ({ pattern: a.pattern || '*', ...(a.path ? { path: a.path } : {}) }),
+    translateBack: (a) => ({ pattern: a.pattern ?? '', path: a.path ?? '.', recursive: false }),
+  },
+  // Cursor
+  file_search: {
+    ccTool: 'Glob',
+    translateArgs: (a) => ({ pattern: a.glob_pattern || a.query || a.pattern || '' }),
+    translateBack: (a) => ({ glob_pattern: a.pattern ?? '', query: a.pattern ?? '' }),
+  },
+  // Cursor / Windsurf / Copilot
+  list_dir: {
+    ccTool: 'Glob',
+    translateArgs: (a) => ({ pattern: '*', ...(a.target_directory || a.DirectoryPath || a.path ? { path: a.target_directory || a.DirectoryPath || a.path } : {}) }),
+    translateBack: (a) => ({ target_directory: a.path ?? '.', DirectoryPath: a.path ?? '.', path: a.path ?? '.' }),
+    reverseScore: 3,
+  },
+  // Windsurf
+  find_by_name: {
+    ccTool: 'Glob',
+    translateArgs: (a) => ({ pattern: a.Pattern || a.pattern || '*', ...(a.SearchDirectory ? { path: a.SearchDirectory } : {}) }),
+    translateBack: (a) => ({ Pattern: a.pattern ?? '', SearchDirectory: a.path ?? '.' }),
+    reverseScore: 5,
+  },
+  // Continue.dev
+  builtin_file_glob_search: {
+    ccTool: 'Glob',
+    translateArgs: (a) => ({ pattern: a.glob || a.pattern || '' }),
+    translateBack: (a) => ({ glob: a.pattern ?? '' }),
+  },
+  builtin_ls: {
+    ccTool: 'Glob',
+    translateArgs: (a) => ({ pattern: '*', ...(a.path ? { path: a.path } : {}) }),
+    translateBack: (a) => ({ path: a.path ?? '.' }),
+    reverseScore: 1,
   },
   grep: { ccTool: 'Grep' },
   search: {
@@ -256,13 +389,39 @@ const TOOL_MAP: Record<string, ToolMapping> = {
   },
   search_files: {
     ccTool: 'Grep',
-    translateArgs: (a) => ({ pattern: a.query || a.pattern || a.regex || '', ...(a.path ? { path: a.path } : {}), ...(a.filePattern ? { glob: a.filePattern } : {}) }),
-    translateBack: (a) => ({ query: a.pattern ?? '', pattern: a.pattern ?? '', regex: a.pattern ?? '', path: a.path ?? '.', filePattern: a.glob ?? '' }),
+    translateArgs: (a) => ({ pattern: a.query || a.pattern || a.regex || '', ...(a.path ? { path: a.path } : {}), ...(a.filePattern || a.file_pattern ? { glob: a.filePattern || a.file_pattern } : {}) }),
+    translateBack: (a) => ({ query: a.pattern ?? '', pattern: a.pattern ?? '', regex: a.pattern ?? '', path: a.path ?? '.', filePattern: a.glob ?? '', file_pattern: a.glob ?? '' }),
+  },
+  // Cursor / Windsurf
+  grep_search: {
+    ccTool: 'Grep',
+    translateArgs: (a) => ({ pattern: a.pattern || a.query || a.Query || '', ...(a.path || a.SearchPath ? { path: a.path || a.SearchPath } : {}), ...(a.glob ? { glob: a.glob } : {}), ...(Array.isArray(a.Includes) && a.Includes[0] ? { glob: a.Includes[0] } : {}) }),
+    translateBack: (a) => ({ pattern: a.pattern ?? '', Query: a.pattern ?? '', path: a.path ?? '.', SearchPath: a.path ?? '.', ...(a.glob ? { glob: a.glob } : {}) }),
+  },
+  // Cursor / Windsurf / Roo Code / Copilot
+  codebase_search: {
+    ccTool: 'Grep',
+    translateArgs: (a) => ({ pattern: a.query || a.Query || a.pattern || '' }),
+    translateBack: (a) => ({ query: a.pattern ?? '', Query: a.pattern ?? '' }),
+    reverseScore: 3,
+  },
+  // Continue.dev
+  builtin_grep_search: {
+    ccTool: 'Grep',
+    translateArgs: (a) => ({ pattern: a.pattern || '', ...(a.path ? { path: a.path } : {}) }),
+    translateBack: (a) => ({ pattern: a.pattern ?? '', path: a.path ?? '.' }),
+  },
+  // Copilot
+  semantic_search: {
+    ccTool: 'Grep',
+    translateArgs: (a) => ({ pattern: a.query || '' }),
+    translateBack: (a) => ({ query: a.pattern ?? '' }),
+    reverseScore: 2,
   },
   web_search: {
     ccTool: 'WebSearch',
-    translateArgs: (a) => ({ query: a.query || a.q || '' }),
-    translateBack: (a) => ({ query: a.query ?? '' }),
+    translateArgs: (a) => ({ query: a.query || a.search_term || a.q || '' }),
+    translateBack: (a) => ({ query: a.query ?? '', search_term: a.query ?? '' }),
   },
   websearch: {
     ccTool: 'WebSearch',
@@ -289,6 +448,30 @@ const TOOL_MAP: Record<string, ToolMapping> = {
     translateArgs: (a) => ({ url: a.url || '' }),
     translateBack: (a) => ({ url: a.url ?? '' }),
   },
+  // Windsurf
+  read_url_content: {
+    ccTool: 'WebFetch',
+    translateArgs: (a) => ({ url: a.Url || a.url || '' }),
+    translateBack: (a) => ({ Url: a.url ?? '', url: a.url ?? '' }),
+  },
+  // Copilot
+  fetch_webpage: {
+    ccTool: 'WebFetch',
+    translateArgs: (a) => ({ url: a.url || '' }),
+    translateBack: (a) => ({ url: a.url ?? '' }),
+  },
+  // Windsurf
+  search_web: {
+    ccTool: 'WebSearch',
+    translateArgs: (a) => ({ query: a.query || '' }),
+    translateBack: (a) => ({ query: a.query ?? '' }),
+  },
+  // Continue.dev
+  builtin_search_web: {
+    ccTool: 'WebSearch',
+    translateArgs: (a) => ({ query: a.query || '' }),
+    translateBack: (a) => ({ query: a.query ?? '', num_results: 5 }),
+  },
   notebook: { ccTool: 'NotebookEdit' },
   notebook_edit: { ccTool: 'NotebookEdit' },
   // Additional client tool mappings
@@ -301,6 +484,12 @@ const TOOL_MAP: Record<string, ToolMapping> = {
     ccTool: 'AskUserQuestion',
     translateArgs: (a) => ({ question: String(a.message || a.content || '') }),
     translateBack: (a) => ({ message: a.question ?? '' }),
+  },
+  // Cline / Roo Code
+  ask_followup_question: {
+    ccTool: 'AskUserQuestion',
+    translateArgs: (a) => ({ question: String(a.question || '') }),
+    translateBack: (a) => ({ question: a.question ?? '' }),
   },
   todo_read: {
     ccTool: 'TodoWrite',
