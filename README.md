@@ -316,12 +316,13 @@ The OpenAI-compat backend forwards tool definitions byte-for-byte and doesn't ne
 | Flag / env | Description | Default |
 |---|---|---|
 | `--passthrough` / `--thin` | Thin proxy for the Claude backend — OAuth swap only, no template injection | off |
-| `--preserve-tools` / `--keep-tools` | Keep client tool schemas instead of remapping to CC's. Required for clients whose tools have fields CC doesn't — see [Custom tool schemas](#custom-tool-schemas). | off |
-| `--hybrid-tools` / `--context-inject` | Remap to CC tools **and** inject request-context values (`sessionId`, `requestId`, `channelId`, `userId`, `timestamp`) into client-declared fields CC's schema doesn't carry. See [Hybrid tool mode](#hybrid-tool-mode). | off |
+| `--preserve-tools` / `--keep-tools` | Keep client tool schemas instead of remapping to CC's. Required for clients whose tools have fields CC doesn't — see [Custom tool schemas](#custom-tool-schemas). Auto-enabled for Cline / Kilo Code / Roo Code and forks (dario#40 — detected via system-prompt fingerprint). | off (auto for text-tool clients) |
+| `--hybrid-tools` / `--context-inject` | Remap to CC tools **and** inject request-context values (`sessionId`, `requestId`, `channelId`, `userId`, `timestamp`) into client-declared fields CC's schema doesn't carry. See [Hybrid tool mode](#hybrid-tool-mode). Overrides the text-tool auto-detect. | off |
 | `--model=<name>` | Force a model. Shortcuts (`opus`, `sonnet`, `haiku`), full IDs (`claude-opus-4-7`), or a **provider prefix** (`openai:gpt-4o`, `groq:llama-3.3-70b`, `claude:opus`, `local:qwen-coder`) to force the backend server-wide. See [Provider prefix](#provider-prefix). | passthrough |
 | `--port=<n>` | Port to listen on | `3456` |
 | `--host=<addr>` / `DARIO_HOST` | Bind address. Use `0.0.0.0` for LAN, or a specific IP (e.g. a Tailscale interface). When non-loopback, also set `DARIO_API_KEY`. | `127.0.0.1` |
-| `--verbose` / `-v` | Log every request | off |
+| `--verbose` / `-v` | Log every request (one line per request — method + path + billing bucket) | off |
+| `--verbose=2` / `-vv` / `DARIO_LOG_BODIES=1` | Also dump the outbound request body (redacted: bearer tokens, `sk-ant-*` keys, JWTs stripped; capped at 8KB). For wire-level client-compat debugging (dario#40). | off |
 | `DARIO_API_KEY` | If set, all endpoints (except `/health`) require a matching `x-api-key` or `Authorization: Bearer` header. Required when `--host` binds non-loopback. | unset (open) |
 | `DARIO_CORS_ORIGIN` | Override browser CORS origin | `http://localhost:${port}` |
 | `DARIO_NO_BUN` | Disable automatic Bun relaunch | unset |

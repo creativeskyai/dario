@@ -333,6 +333,7 @@ interface ProxyOptions {
   port?: number;
   host?: string;  // Bind address (default: 127.0.0.1)
   verbose?: boolean;
+  verboseBodies?: boolean; // Dump redacted request bodies on every request (dario#40 -vv / DARIO_LOG_BODIES=1)
   model?: string;  // Override model in all requests
   passthrough?: boolean;  // Thin proxy — OAuth swap only, no injection
   preserveTools?: boolean;  // Keep client tool schemas (for agents with custom tools)
@@ -383,6 +384,17 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<void> {
   const host = opts.host ?? process.env.DARIO_HOST ?? DEFAULT_HOST;
   const verbose = opts.verbose ?? false;
   const passthrough = opts.passthrough ?? false;
+  // Text-tool-protocol client families that have already logged a
+  // "detected → auto-enabling preserve-tools" banner this session.
+  // Set once on first sighting per family so the startup log stays
+  // short even under heavy traffic. dario#40.
+  const detectedClientsLogged = new Set<string>();
+  // Body-dump mode: set via --verbose=2 / -vv or DARIO_LOG_BODIES=1.
+  // When on, every request emits a redacted JSON body to stderr so
+  // operators can see exactly what dario forwards upstream. Default
+  // -v stays quiet because bodies can carry file content and tool
+  // output. Reported in dario#40 by @ringge.
+  const verboseBodies = Boolean(opts.verboseBodies) || process.env.DARIO_LOG_BODIES === '1';
 
   // Multi-provider backends (v3.6.0+). Loaded once at startup; the CLI
   // `dario backend add openai --key=…` writes to ~/.dario/backends/.
@@ -992,7 +1004,7 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<void> {
             const bodyIdentity = poolAccount
               ? poolAccount.identity
               : { deviceId: identity.deviceId, accountUuid: identity.accountUuid, sessionId: SESSION_ID };
-            const { body: ccBody, toolMap } = buildCCRequest(
+            const { body: ccBody, toolMap, detectedClient } = buildCCRequest(
               r, billingTag, CACHE_1H,
               bodyIdentity,
               {
@@ -1000,6 +1012,21 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<void> {
                 hybridTools: opts.hybridTools ?? false,
               },
             );
+
+            // Log the auto-preserve-tools switch once per text-tool
+            // client family. Skip when the operator already opted into
+            // --preserve-tools or --hybrid-tools — they know what they
+            // picked and don't need a "hey, we heuristically agree"
+            // line on every new client seen. dario#40.
+            if (
+              detectedClient
+              && !opts.preserveTools
+              && !opts.hybridTools
+              && !detectedClientsLogged.has(detectedClient)
+            ) {
+              detectedClientsLogged.add(detectedClient);
+              console.log(`[dario] detected ${detectedClient}-style text-tool protocol — auto-enabling preserve-tools for this client (pass --hybrid-tools to override, --preserve-tools to silence)`);
+            }
 
             // Store tool map for response reverse-mapping
             ccToolMap = toolMap;
@@ -1015,6 +1042,21 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<void> {
       if (verbose) {
         const modelInfo = modelOverride ? ` (model: ${modelOverride})` : '';
         console.log(`[dario] #${requestCount} ${req.method} ${urlPath}${modelInfo}`);
+      }
+
+      // Body dump — -vv / DARIO_LOG_BODIES=1. Runs on the outbound
+      // body after the template build so operators see what actually
+      // lands on the wire. sanitizeError's redaction strips bearer
+      // tokens, sk-ant-* keys, and JWT triples in case any leaked
+      // into the body (e.g. user pasted a curl). 8KB cap because the
+      // CC system prompt alone is 25KB and dumping it every request
+      // buries the useful content. dario#40.
+      if (verboseBodies && finalBody) {
+        const rendered = finalBody.toString('utf8');
+        const capped = rendered.length > 8192
+          ? rendered.slice(0, 8192) + `\n[...truncated ${rendered.length - 8192} bytes]`
+          : rendered;
+        console.log(`[dario] #${requestCount} request body:\n${sanitizeError(capped)}`);
       }
 
       // Beta headers

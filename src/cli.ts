@@ -144,7 +144,15 @@ async function proxy() {
     console.error('[dario] Invalid --host. Must be an IP address or hostname.');
     process.exit(1);
   }
-  const verbose = args.includes('--verbose') || args.includes('-v');
+  // --verbose=2 / -vv / DARIO_LOG_BODIES=1 → emit redacted request bodies
+  // on every POST. -v alone is unchanged (one-line per-request summary).
+  // dario#40 (ringge asked for a body-dump mode when debugging client
+  // compatibility without having to attach a MITM).
+  const verboseBodies =
+    args.includes('-vv')
+    || args.includes('--verbose=2')
+    || process.env.DARIO_LOG_BODIES === '1';
+  const verbose = verboseBodies || args.includes('--verbose') || args.includes('-v');
   const passthrough = args.includes('--passthrough') || args.includes('--thin');
   const preserveTools = args.includes('--preserve-tools') || args.includes('--keep-tools');
   const hybridTools = args.includes('--hybrid-tools') || args.includes('--context-inject');
@@ -155,7 +163,7 @@ async function proxy() {
   const modelArg = args.find(a => a.startsWith('--model='));
   const model = modelArg ? modelArg.split('=')[1] : undefined;
 
-  await startProxy({ port, host, verbose, model, passthrough, preserveTools, hybridTools });
+  await startProxy({ port, host, verbose, verboseBodies, model, passthrough, preserveTools, hybridTools });
 }
 
 async function accounts() {
@@ -407,6 +415,8 @@ async function help() {
     --host=ADDRESS           Address to bind to (default: 127.0.0.1)
                              Use 0.0.0.0 for LAN; see README for DARIO_API_KEY
     --verbose, -v            Log all requests
+    --verbose=2, -vv         Also dump redacted request bodies
+                             (env: DARIO_LOG_BODIES=1)
 
   Quick start:
     dario login              # auto-detects Claude Code credentials

@@ -2,6 +2,30 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.19.3] - 2026-04-17
+
+### Fixed — Cline/Kilo/Roo tool calls appear as generic XML in client UI (dario#40)
+
+Default dario mode swaps the client's `tools` array for CC's canonical set so the upstream request looks like a real CC request. For text-tool-protocol clients (Cline, Kilo Code, Roo Code and forks) this confuses the model: it sees CC's canonical `Bash` / `Read` / `Edit` in the `tools` array but it sees the client's XML tool protocol (`<execute_command>`, `<replace_in_file>`, `<attempt_completion>`) in the system prompt. The model resolves the ambiguity by emitting Anthropic's generic `<function_calls><invoke>` wrapper — well-formed for a CC-tool client, unparseable for a text-tool client, so every edit surfaces as an error in the client UI even though the model produced a valid response. `--preserve-tools` resolves it (confirmed by @ringge on v3.19.2), but users shouldn't need to discover a flag exists to use the software.
+
+- **Auto-detect text-tool clients in `src/cc-template.ts`.** New `detectTextToolClient(systemText)` fingerprints the incoming system prompt against three identity strings (`You are Cline`, `You are Kilo Code`, `You are Roo`) and three protocol signatures (`<attempt_completion>`, `<ask_followup_question>`, `<<<<<<< SEARCH`). Identity strings are checked before `scrubFrameworkIdentifiers` strips brand names; protocol signatures survive scrubbing and catch forks that edited the identity line out.
+- **Auto-enable preserve-tools behavior in `buildCCRequest`.** When the detector fires and the operator hasn't picked `--hybrid-tools`, `effectivePreserveTools` is set to true for that request — the outbound `tools` array becomes the client's schema verbatim, message-history tool_use remapping is skipped, and the client receives the model's native XML shape. Explicit `--preserve-tools` is unchanged (still honored with or without detection). Explicit `--hybrid-tools` takes precedence over detection: operator opt-in wins, and the detector's output is still returned in `detectedClient` for logging.
+- **Detection log in `src/proxy.ts`.** First sighting of each client family ("cline", "kilo", "roo", "cline-like") emits `[dario] detected <family>-style text-tool protocol — auto-enabling preserve-tools for this client …` to stdout. Set-based dedupe so heavy traffic doesn't spam the log. Suppressed when the operator already picked `--preserve-tools` or `--hybrid-tools` (they know what they picked).
+
+### Added — Body-dump verbose mode (dario#40, @ringge feedback)
+
+`-v` alone emitted only a one-line per-request summary (method + path + billing bucket), which wasn't enough to diagnose wire-level client-compat problems without attaching a MITM. `-vv` / `--verbose=2` / `DARIO_LOG_BODIES=1` now dump the outbound request body (redacted via `sanitizeError`: bearer tokens, `sk-ant-*` keys, JWT triples) to stdout, capped at 8KB per request with a truncation marker. Default `-v` is unchanged — file content and tool output stay out of the log unless the operator opts in. Response-body logging is not in this patch; SSE stream buffering is a separate scope.
+
+### Added — Test coverage
+
+- **`test/client-detection.mjs`** — 23 new assertions across 8 cases: identity-string detection for Cline / Kilo / Roo; protocol-signature fallback via `<attempt_completion>`, `<ask_followup_question>`, and the SEARCH/REPLACE diff fence; five negatives (empty / undefined / plain prompt / CC system prompt / generic "search-and-replace" prose) to guard against false positives; auto-preserve wiring through `buildCCRequest` (tools preserved, not replaced); `--hybrid-tools` override semantics; explicit `--preserve-tools` regression guard; default-mode regression guard (no system prompt, no flag → CC remap); array-form `system` field handling.
+
+Total test footprint: **728 assertions across 21 files** (was 705). Full `npm test` green.
+
+### Why this release
+
+v3.19.1 fixed Cline's reverse-translation shape, but the default tool-swap path itself was the trap for text-tool clients — they were getting a correct-but-unparseable response format. `--preserve-tools` was the right knob, it was just undiscoverable. Auto-detection makes correct behavior the default for the clients that need it while keeping the CC fingerprint for every other client that doesn't. `-vv` closes the other half of the issue: when compat breaks on a client dario hasn't seen before, the operator can now see exactly what landed on the wire without reaching for Wireshark.
+
 ## [3.19.2] - 2026-04-17
 
 ### Fixed — `invalid x-api-key` 401 on live-captured templates (dario#42)

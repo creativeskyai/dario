@@ -127,6 +127,67 @@ export function scrubFrameworkIdentifiers(text: string): string {
 }
 
 /**
+ * Detect text-tool-protocol clients (Cline, Kilo Code, Roo Code and
+ * their forks) by fingerprinting the incoming system prompt.
+ *
+ * These clients ship their own XML-style tool invocation protocol in
+ * the system prompt (`<execute_command>`, `<replace_in_file>`,
+ * `<attempt_completion>`, …) and parse the model's output with a
+ * regex tuned to that exact shape. When dario's default mode
+ * substitutes CC's canonical tools into the `tools` array, the model
+ * correctly emits Anthropic's generic `<function_calls><invoke>`
+ * wrapper — which is well-formed for a CC-tool request but
+ * unparseable for a text-protocol client, so every edit surfaces as
+ * an error in the client UI even though the model produced a valid
+ * response (dario#40, reported by @ringge).
+ *
+ * The fix is preserve-tools behavior: skip the CC tool swap so the
+ * model sees the client's own schema and emits its native XML shape.
+ * Auto-detection saves users from having to discover the
+ * `--preserve-tools` flag exists; the flag is still honored as an
+ * explicit override and `--hybrid-tools` outranks detection.
+ *
+ * Detection must run BEFORE `scrubFrameworkIdentifiers` so brand
+ * names like "Cline" / "Roo" are still present. Tool-protocol
+ * markers are scrub-proof on their own.
+ *
+ * Returns the matched family (`cline` / `kilo` / `roo` / `cline-like`)
+ * or null when no text-tool protocol signature is present.
+ */
+export function detectTextToolClient(systemText: string): string | null {
+  if (!systemText) return null;
+  if (/\bYou are Cline\b/.test(systemText)) return 'cline';
+  if (/\bYou are Kilo Code\b/.test(systemText)) return 'kilo';
+  if (/\bYou are Roo\b/.test(systemText)) return 'roo';
+  // Protocol-signature fallback — unique to the Cline family and its
+  // forks; survives a forked system prompt that edited the identity
+  // string out but kept the tool protocol intact.
+  if (/<attempt_completion>/.test(systemText)) return 'cline-like';
+  if (/<ask_followup_question>/.test(systemText)) return 'cline-like';
+  if (/<<<<<<< SEARCH\b/.test(systemText)) return 'cline-like';
+  return null;
+}
+
+/**
+ * Flatten an Anthropic-shaped `system` field (string or array of text
+ * blocks) to a single joined string. Skips the billing-tag block so
+ * captured billing metadata isn't conflated with the operator's own
+ * prompt. Used both by the main request-build path (post-scrub) and
+ * by the early text-tool-client detector (pre-scrub).
+ */
+export function extractSystemText(clientBody: Record<string, unknown>): string {
+  const sys = clientBody.system;
+  if (typeof sys === 'string') return sys;
+  if (Array.isArray(sys)) {
+    return (sys as Array<{ text?: string }>)
+      .filter(b => b.text && !b.text.includes('x-anthropic-billing-header:'))
+      .map(b => b.text)
+      .join('\n\n');
+  }
+  return '';
+}
+
+/**
  * Client tool name → CC tool mapping with parameter translation.
  *
  * `translateArgs` runs forward (client → CC) when building the upstream
@@ -646,13 +707,24 @@ export function buildCCRequest(
   cache1h: { type: 'ephemeral'; ttl: '1h' },
   identity: { deviceId: string; accountUuid: string; sessionId: string },
   opts: { preserveTools?: boolean; hybridTools?: boolean } = {},
-): { body: Record<string, unknown>; toolMap: Map<string, ToolMapping>; unmappedTools: string[] } {
+): { body: Record<string, unknown>; toolMap: Map<string, ToolMapping>; unmappedTools: string[]; detectedClient?: string } {
 
   const model = clientBody.model as string || 'claude-sonnet-4-6';
   const isHaiku = model.toLowerCase().includes('haiku');
   const messages = clientBody.messages as Array<Record<string, unknown>> || [];
   const clientTools = clientBody.tools as Array<Record<string, unknown>> | undefined;
   const stream = clientBody.stream ?? false;
+
+  // ── Detect text-tool-protocol clients up-front ──
+  // Cline / Kilo Code / Roo Code (and forks) ship an XML tool-invocation
+  // protocol in the system prompt. Peek at it before scrubbing so the
+  // brand name is still present, decide whether to auto-switch into
+  // preserve-tools behavior below. Explicit --hybrid-tools outranks the
+  // heuristic (operator opt-in wins). dario#40.
+  const rawSystemForDetection = extractSystemText(clientBody);
+  const detectedClient = detectTextToolClient(rawSystemForDetection) ?? undefined;
+  const autoPreserve = Boolean(detectedClient) && !opts.hybridTools;
+  const effectivePreserveTools = Boolean(opts.preserveTools) || autoPreserve;
 
   // ── Strip thinking from history ──
   for (const msg of messages) {
@@ -699,7 +771,7 @@ export function buildCCRequest(
   const activeToolMap = new Map<string, ToolMapping>();
   const unmappedTools: string[] = [];
 
-  if (clientTools && !opts.preserveTools) {
+  if (clientTools && !effectivePreserveTools) {
     // Two passes so the unmapped-tool distributor can avoid colliding with
     // CC tools the client already uses directly. Without this, a client
     // sending both `WebSearch` and some unmapped tool like `memory_get`
@@ -781,7 +853,7 @@ export function buildCCRequest(
 
   // ── Remap tool_use and tool_result references in message history ──
   // Skip in preserveTools mode — leave conversation history untouched.
-  if (!opts.preserveTools) {
+  if (!effectivePreserveTools) {
     for (const msg of messages) {
       if (Array.isArray(msg.content)) {
         for (const block of msg.content as Array<Record<string, unknown>>) {
@@ -832,18 +904,11 @@ export function buildCCRequest(
   }
 
   // ── Merge system prompt ──
-  let systemText = '';
-  const sys = clientBody.system;
-  if (typeof sys === 'string') {
-    systemText = sys;
-  } else if (Array.isArray(sys)) {
-    systemText = (sys as Array<{ text?: string }>)
-      .filter(b => b.text && !b.text.includes('x-anthropic-billing-header:'))
-      .map(b => b.text)
-      .join('\n\n');
-  }
-
-  systemText = scrubFrameworkIdentifiers(systemText);
+  // rawSystemForDetection holds the same text already used by the
+  // up-front detector above — reuse it here so we don't reparse the
+  // system array a second time per request. Scrub applies at this
+  // point so framework identifiers don't leak upstream.
+  let systemText = scrubFrameworkIdentifiers(rawSystemForDetection);
 
   // Also scrub framework identifiers from message content text blocks.
   // Clients often inject their product name into user/tool messages as well,
@@ -896,7 +961,7 @@ export function buildCCRequest(
   // preserveTools mode: pass client tools through unchanged (better for real
   // agents with custom schemas, but loses the CC tool fingerprint).
   if (clientTools && clientTools.length > 0) {
-    ccRequest.tools = opts.preserveTools ? clientTools : CC_TOOL_DEFINITIONS;
+    ccRequest.tools = effectivePreserveTools ? clientTools : CC_TOOL_DEFINITIONS;
   }
 
   // Metadata
@@ -919,7 +984,7 @@ export function buildCCRequest(
 
   ccRequest.stream = stream;
 
-  return { body: ccRequest, toolMap: activeToolMap, unmappedTools };
+  return { body: ccRequest, toolMap: activeToolMap, unmappedTools, detectedClient };
 }
 
 /**
