@@ -478,6 +478,11 @@ async function help() {
     dario backend remove N   Remove an OpenAI-compat backend
     dario shim -- CMD ARGS   Run CMD inside the dario shim (experimental,
                              stealth fingerprint via in-process fetch patch)
+    dario subagent install   Register ~/.claude/agents/dario.md so Claude Code
+                             can delegate dario diagnostics / template-refresh
+                             operations to a named sub-agent (v3.26)
+    dario subagent remove    Remove the registered sub-agent file
+    dario subagent status    Show whether the sub-agent is installed
     dario doctor             Print a health report: dario / Node / CC /
                              template / drift / OAuth / pool / backends
 
@@ -596,6 +601,76 @@ async function shim() {
   }
 }
 
+async function subagent() {
+  const sub = args[1] ?? 'status';
+  const { installSubagent, removeSubagent, loadSubagentStatus, SUBAGENT_NAME } = await import('./subagent.js');
+
+  if (sub === 'install') {
+    const r = installSubagent();
+    console.log('');
+    console.log('  dario — Sub-agent install');
+    console.log('  ─────────────────────────');
+    console.log('');
+    if (r.action === 'unchanged') {
+      console.log(`  Already up to date at ${r.path} (v${r.version}).`);
+    } else {
+      console.log(`  ${r.action === 'created' ? 'Installed' : 'Updated'} at ${r.path} (v${r.version}).`);
+    }
+    console.log('');
+    console.log('  Claude Code will pick up the new sub-agent on its next startup.');
+    console.log(`  Invoke it from CC with: "Use the ${SUBAGENT_NAME} sub-agent to …"`);
+    console.log('');
+    return;
+  }
+
+  if (sub === 'remove' || sub === 'uninstall') {
+    const r = removeSubagent();
+    console.log('');
+    console.log('  dario — Sub-agent remove');
+    console.log('  ────────────────────────');
+    console.log('');
+    if (r.removed) {
+      console.log(`  Removed ${r.path}.`);
+    } else {
+      console.log(`  Nothing to remove — ${r.path} was not present.`);
+    }
+    console.log('');
+    return;
+  }
+
+  if (sub === 'status') {
+    const s = loadSubagentStatus();
+    console.log('');
+    console.log('  dario — Sub-agent status');
+    console.log('  ────────────────────────');
+    console.log('');
+    console.log(`  Path:             ${s.path}`);
+    console.log(`  ~/.claude/agents: ${s.agentsDirExists ? 'exists' : 'missing (Claude Code not installed?)'}`);
+    if (!s.installed) {
+      console.log('  Installed:        no');
+      console.log('');
+      console.log('  Install with: dario subagent install');
+    } else {
+      console.log(`  Installed:        yes (v${s.fileVersion ?? 'unknown'})`);
+      if (!s.current) {
+        console.log('  Note:             file version does not match installed dario — run `dario subagent install` to refresh.');
+      }
+    }
+    console.log('');
+    return;
+  }
+
+  console.error('');
+  console.error('  Usage: dario subagent <install | remove | status>');
+  console.error('');
+  console.error('  install   Write ~/.claude/agents/dario.md so Claude Code can');
+  console.error('            delegate dario diagnostics to a named sub-agent.');
+  console.error('  remove    Remove the installed sub-agent file.');
+  console.error('  status    Report whether the sub-agent is installed (default).');
+  console.error('');
+  process.exit(1);
+}
+
 async function doctor() {
   const { runChecks, formatChecks, exitCodeFor } = await import('./doctor.js');
   console.log('');
@@ -635,6 +710,7 @@ const commands: Record<string, () => Promise<void>> = {
   accounts,
   backend,
   shim,
+  subagent,
   doctor,
   help,
   version,

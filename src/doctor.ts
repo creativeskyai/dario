@@ -223,6 +223,27 @@ export async function runChecks(): Promise<Check[]> {
     checks.push({ status: 'warn', label: 'Backends', detail: `check failed: ${(err as Error).message}` });
   }
 
+  // ---- CC sub-agent (v3.26, direction #2)
+  try {
+    const { loadSubagentStatus } = await import('./subagent.js');
+    const s = loadSubagentStatus();
+    if (!s.agentsDirExists) {
+      checks.push({ status: 'info', label: 'Sub-agent', detail: 'not installed (~/.claude/agents missing — Claude Code not installed?)' });
+    } else if (!s.installed) {
+      checks.push({ status: 'info', label: 'Sub-agent', detail: 'not installed — run `dario subagent install` to enable CC integration' });
+    } else if (!s.current) {
+      checks.push({
+        status: 'warn',
+        label: 'Sub-agent',
+        detail: `installed v${s.fileVersion ?? 'unknown'}, does not match this dario — run \`dario subagent install\` to refresh`,
+      });
+    } else {
+      checks.push({ status: 'ok', label: 'Sub-agent', detail: `installed v${s.fileVersion} at ${s.path}` });
+    }
+  } catch (err) {
+    checks.push({ status: 'warn', label: 'Sub-agent', detail: `check failed: ${(err as Error).message}` });
+  }
+
   // ---- ~/.dario dir
   try {
     const home = join(homedir(), '.dario');

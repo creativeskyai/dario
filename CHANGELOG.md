@@ -2,6 +2,29 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.26.0] - 2026-04-17
+
+### Added — Claude Code sub-agent hook (direction #2)
+
+Claude Code reads sub-agent definitions from `~/.claude/agents/*.md` — each one is a tool-scoped prompt context that CC can delegate work into via the Task tool (or that the user can invoke directly with "use the X sub-agent to…"). v3.26 registers a first-party `dario` sub-agent so CC has a named handle for running dario diagnostics and template-refresh operations inside an ongoing CC session — no more context-switching out to a terminal when you hit a `[WARN]` row or suspect template drift.
+
+The sub-agent is tool-scoped to `Bash, Read` and its prompt forbids destructive operations (credential mutation, account pool changes, backend config changes) without explicit user confirmation. `dario proxy` is also explicitly off-limits from inside the sub-agent (it would block the parent CC session). The boundary is intentional: CC can ask dario to *report*, not to *change state*.
+
+- **`src/subagent.ts` — install/remove/status lifecycle.** `buildSubagentFile(version)` returns the full markdown body (pure, pinned by tests — changing the content is a visible diff). `computeSubagentStatus` is pure over `(fileExists, fileBody, currentVersion)` and distinguishes four states: not-installed-and-CC-missing (`agentsDirExists: false`), not-installed-but-CC-present, installed-and-current, installed-but-stale (the on-disk `<!-- dario-sub-agent-version: X -->` marker doesn't match the running dario). `installSubagent` auto-creates `~/.claude/agents/` when absent, returns `created` / `updated` / `unchanged` so the CLI can log accurately, and never overwrites unrelated sub-agent files in the same directory. `removeSubagent` is idempotent and deliberately does not remove the parent `agents/` directory (other sub-agents may coexist).
+- **`src/cli.ts` — `dario subagent install | remove | status`.** Three subcommands matching the `dario accounts` / `dario backend` pattern. `status` is the default when the verb is omitted. Unknown verbs print a short usage block and exit 1.
+- **`src/doctor.ts` — new "Sub-agent" check.** Between the Backends and Home rows. Reports `info` when CC isn't installed (no `~/.claude/agents/` to write into), `info` when installed-but-sub-agent-missing (with the install command inline), `warn` when installed-but-stale (with the refresh command inline), and `ok` when installed and current.
+- **`src/cli.ts` — help text.** Three new lines under the command list pointing at `install` / `remove` / `status`.
+
+### Added — Test coverage
+
+- **`test/subagent.mjs`** — 48 new assertions across 7 sections. Pure-helper coverage: `buildSubagentFile` pinned structure (frontmatter delimiter, name field, description field, tool restriction line, version marker embedding, safe-op mentions, destructive-op warnings), determinism (same version → byte-identical; differing version → only the marker changes). `computeSubagentStatus` branches: file absent (with CC dir present and absent), file present with matching marker, file present with mismatched marker (installed-but-stale), file present without any marker (user-hand-edited). Filesystem round-trip against an isolated temp HOME: pre-install status, install creates the directory + file, on-disk content matches `buildSubagentFile(r.version)`, post-install status reports installed+current, re-install with no change reports `unchanged`, stale-file install reports `updated`, remove reports `removed=true` then `removed=false` (idempotent), agents dir persists after remove (other sub-agents untouched). Dedicated "populated agents dir" section verifies `install` doesn't clobber an unrelated sub-agent and `remove` only unlinks `dario.md`.
+
+Total test footprint: **983 assertions across 28 files** (was 935). Full `npm test` green.
+
+### Why this release
+
+Direction #2 from the "get ahead of Anthropic" roadmap. The original framing was "funnel consumer traffic through CC session" — a maximal-fidelity vision where third-party consumers would route through a running CC's own session, inheriting its TLS stack, headers, and billing classification. That shape needs infrastructure that doesn't fit a single release (CC-as-a-subprocess, request multiplexing, billing attribution). v3.26 ships the tighter, more-immediately-useful slice: a CC-side handle that makes dario's existing diagnostics and refresh commands first-class CC operations. The maximal vision is not ruled out — `src/subagent.ts`'s `buildSubagentFile` is the extension point, and the prompt can grow richer (e.g., add a "refresh-template" action that runs the capture pipeline directly) without changing the install/remove/status mechanics. For now, the value proposition is pragmatic: `/use dario` inside CC beats `Ctrl+Z → dario doctor → fg` every time.
+
 ## [3.25.0] - 2026-04-17
 
 ### Added — Stream-consumption replay (direction #5)
