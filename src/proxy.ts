@@ -513,8 +513,16 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<void> {
   // Excludes auth + body-framing + session-scoped keys by construction (see
   // extractStaticHeaderValues in live-fingerprint.ts). No-op when the loaded
   // template predates v2 or the bundled snapshot is in use.
+  //
+  // `x-api-key` is filtered defensively here too — pre-v3.19.2 captures still
+  // carry `x-api-key: sk-dario-fingerprint-capture` from the MITM spawn env.
+  // Replaying that placeholder alongside a real OAuth Bearer triggers a
+  // "invalid x-api-key" 401 on some account tiers as of 2026-04-17 (dario#42).
+  // The capture filter was updated in v3.19.2 to stop storing it, but the
+  // per-request skip below lets existing caches self-heal without a refresh.
   if (!passthrough && CC_TEMPLATE.header_values) {
     for (const [k, v] of Object.entries(CC_TEMPLATE.header_values)) {
+      if (k.toLowerCase() === 'x-api-key') continue;
       staticHeaders[k] = v;
     }
   }
@@ -528,6 +536,14 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<void> {
   // is the single-account slot. Reported by @boeingchoco in dario#36 — the
   // retry loop was firing on every POST with hybrid-tools + OC.
   const context1mUnavailable = new Set<string>();
+  // Per-account cache of anthropic-beta flags the upstream has rejected as
+  // "Unexpected value(s)". The live-captured template lifts whatever CC emits
+  // verbatim — including flags gated to higher-tier accounts (e.g.
+  // `afk-mode-2026-01-31` is rejected on Max 5x as of 2026-04-17). On the
+  // first rejection we parse the flag out of the error message, strip it,
+  // retry once, and cache it so subsequent requests on the same account don't
+  // re-pay the 400 round-trip. Keyed by account alias (pool) or `__default__`.
+  const unavailableBetas = new Map<string, Set<string>>();
   const ACCOUNT_KEY_SINGLE = '__default__';
 
   // Beta flag set — sourced from the live template when the capture recorded
@@ -536,7 +552,18 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<void> {
   // never diverge on the wire). Computed once per proxy because it's a
   // function of the loaded template, not of the request.
   const BETA_FALLBACK = 'claude-code-20250219,oauth-2025-04-20,context-1m-2025-08-07,interleaved-thinking-2025-05-14,context-management-2025-06-27,prompt-caching-scope-2026-01-05,advisor-tool-2026-03-01,effort-2025-11-24';
-  const betaBase = CC_TEMPLATE.anthropic_beta || BETA_FALLBACK;
+  let betaBase = CC_TEMPLATE.anthropic_beta || BETA_FALLBACK;
+  // `oauth-2025-04-20` is CC's OAuth-enablement beta flag. It is NOT present in
+  // the live-captured beta set because dario's fingerprint capture spawns CC
+  // with a placeholder `ANTHROPIC_API_KEY`, and CC only appends the oauth beta
+  // when it's actually using an OAuth bearer token. The proxy always uses
+  // OAuth upstream, so the flag is required — force it in if the captured
+  // template didn't carry it. As of 2026-04-17 some account tiers (Max 20x,
+  // Pro) return `authentication_error: invalid x-api-key` without this flag
+  // even when a valid Bearer is sent (dario#42).
+  if (!passthrough && !betaBase.split(',').includes('oauth-2025-04-20')) {
+    betaBase = betaBase ? `${betaBase},oauth-2025-04-20` : 'oauth-2025-04-20';
+  }
   const betaWithoutContext1m = betaBase.split(',').filter((t) => t !== 'context-1m-2025-08-07').join(',');
 
   // Rate governor — minimum 500ms between requests. Fast enough for agents,
@@ -1013,6 +1040,14 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<void> {
             .split(',').filter(b => b.length > 0 && !baseSet.has(b)).join(',');
           if (filtered) beta += ',' + filtered;
         }
+        // Strip any beta flags the upstream has previously rejected on this
+        // account so we don't re-pay the 400 round-trip (dario#42 afk-mode
+        // fallout: captured templates carry tier-gated flags whose availability
+        // we only learn at request time).
+        const rejectedSet = unavailableBetas.get(acctKey);
+        if (rejectedSet && rejectedSet.size > 0) {
+          beta = beta.split(',').filter((t) => t.length > 0 && !rejectedSet.has(t)).join(',');
+        }
       }
 
       // Rate governor — prevent inhuman request cadence
@@ -1121,7 +1156,44 @@ export async function startProxy(opts: ProxyOptions = {}): Promise<void> {
         const isLongContextError = peekedBody.includes('long context')
           || peekedBody.includes('Extra usage is required')
           || peekedBody.includes('long_context');
-        if (isLongContextError) {
+        // Detect "Unexpected value(s) `flag-name` for the `anthropic-beta` header"
+        // — the upstream's way of saying this account tier doesn't have the
+        // flag. Parse out the offending tokens (there can be more than one),
+        // cache them, strip, and retry.
+        const betaRejectedFlags: string[] = [];
+        if (upstream.status === 400 && peekedBody.includes('anthropic-beta')) {
+          const re = /Unexpected value\(s\)\s+((?:`[^`]+`(?:\s*,\s*)?)+)\s+for the `anthropic-beta` header/;
+          const m = peekedBody.match(re);
+          if (m) {
+            for (const tok of m[1].matchAll(/`([^`]+)`/g)) betaRejectedFlags.push(tok[1]);
+          }
+        }
+        if (betaRejectedFlags.length > 0) {
+          const acctKey = poolAccount?.alias ?? ACCOUNT_KEY_SINGLE;
+          let set = unavailableBetas.get(acctKey);
+          if (!set) { set = new Set(); unavailableBetas.set(acctKey, set); }
+          const newFlags: string[] = [];
+          for (const f of betaRejectedFlags) { if (!set.has(f)) { set.add(f); newFlags.push(f); } }
+          if (verbose && newFlags.length > 0) console.log(`[dario] #${requestCount} anthropic-beta rejected (${newFlags.join(',')}) — retrying without (cached for session)`);
+          const reducedBeta = beta.split(',').filter((t) => t.length > 0 && !set!.has(t)).join(',');
+          const retryHeaders = { ...headers, 'anthropic-beta': reducedBeta };
+          const retry = await fetch(targetBase, {
+            method: req.method ?? 'POST',
+            headers: passthrough ? retryHeaders : orderHeadersForOutbound(retryHeaders),
+            body: finalBody ? new Uint8Array(finalBody) : undefined,
+            signal: upstreamAbort.signal,
+          });
+          upstream = retry;
+          peekedBody = null;
+          if (pool && poolAccount) {
+            const retrySnapshot = parseRateLimits(upstream.headers);
+            if (upstream.status === 429) {
+              pool.markRejected(poolAccount.alias, retrySnapshot);
+            } else {
+              pool.updateRateLimits(poolAccount.alias, retrySnapshot);
+            }
+          }
+        } else if (isLongContextError) {
           // Cache the rejection so future requests on this account skip
           // context-1m up front instead of re-paying the 400/429 round-trip.
           const acctKey = poolAccount?.alias ?? ACCOUNT_KEY_SINGLE;

@@ -11,6 +11,10 @@
   <a href="https://www.npmjs.com/package/@askalf/dario"><img src="https://img.shields.io/npm/dm/@askalf/dario" alt="Downloads"></a>
 </p>
 
+<p align="center">
+  <sub><strong>v4 is not a version bump.</strong> The router was the prerequisite. What comes next uses it as a substrate. — <a href="https://github.com/askalf/dario/discussions/categories/announcements">watch this space</a></sub>
+</p>
+
 ```bash
 npm install -g @askalf/dario && dario proxy
 ```

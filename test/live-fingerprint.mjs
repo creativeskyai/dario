@@ -413,6 +413,10 @@ header('extractTemplate — anthropic_beta + header_values (schema v2)');
       'host': 'api.anthropic.com',
       'x-claude-code-session-id': 'session-abc',
       'x-client-request-id': 'rid-xyz',
+      // x-api-key is the capture-env placeholder that dario's fingerprint
+      // spawn sets (ANTHROPIC_API_KEY=sk-dario-fingerprint-capture). It must
+      // never land in the stored template — see dario#42.
+      'x-api-key': 'sk-dario-fingerprint-capture',
     },
     rawHeaders: [
       'host', 'api.anthropic.com',
@@ -450,6 +454,8 @@ header('extractTemplate — anthropic_beta + header_values (schema v2)');
     !('x-claude-code-session-id' in (t?.header_values ?? {})));
   check('header_values excludes x-client-request-id',
     !('x-client-request-id' in (t?.header_values ?? {})));
+  check('header_values excludes x-api-key (capture-env placeholder, dario#42)',
+    !('x-api-key' in (t?.header_values ?? {})));
 }
 
 header('extractTemplate — omits anthropic_beta + header_values when absent');

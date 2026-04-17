@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.19.2] - 2026-04-17
+
+### Fixed — `invalid x-api-key` 401 on live-captured templates (dario#42)
+
+Users on Max 20x and Pro subscriptions started getting `authentication_error: invalid x-api-key` (HTTP 401) against a valid, unexpired OAuth token on v3.19.1. Max 5x was unaffected by the 401 itself but produced a different downstream failure (`Unexpected value(s) 'afk-mode-2026-01-31' for the anthropic-beta header`). Both symptoms traced back to the same root cause: the schema-v2 live capture was lifting CC's on-the-wire headers verbatim into the replay template, and two of those values are only valid in the *capture environment*, not at request time.
+
+- **`x-api-key` placeholder leaked into the template.** The fingerprint spawn sets `ANTHROPIC_API_KEY=sk-dario-fingerprint-capture` and points CC at a loopback MITM, so CC emits `x-api-key: sk-dario-fingerprint-capture` on the captured request. Pre-v3.19.2 that header landed in `template.header_values` and got replayed upstream alongside the real OAuth `Authorization: Bearer` on every proxy request. Anthropic historically ignored `x-api-key` when a Bearer was present, so the bug was latent — as of 2026-04-17 some account tiers started rejecting it with a 401. `src/live-fingerprint.ts` now adds `x-api-key` to `STATIC_HEADER_EXCLUDE` so fresh captures don't store it, and `src/proxy.ts` skips `x-api-key` when overlaying `header_values` onto outbound headers so existing caches self-heal without a template refresh.
+- **`oauth-2025-04-20` beta flag was absent from captures.** CC only appends `oauth-2025-04-20` to `anthropic-beta` when it's actually using an OAuth Bearer token — the capture env uses a placeholder API key, so the flag never made it into the captured beta set. The proxy always speaks OAuth upstream, so the flag is required. `src/proxy.ts` now force-adds `oauth-2025-04-20` to the beta list if the template didn't carry it. Same reasoning applies whether the cache is fresh or stale.
+- **Generic `Unexpected value(s)` retry for tier-gated betas.** The captured template reflects whatever flags CC emits on the capture host's account tier, so a template taken on a Max 20x machine may carry flags (`afk-mode-2026-01-31`, etc.) that a Max 5x or Pro account doesn't have access to. When the upstream rejects a beta flag as `Unexpected value(s) 'X'` (HTTP 400), `src/proxy.ts` now parses the offending tokens out of the error body, strips them from the beta header, retries once, and caches the rejection per-account for the session — same shape as the existing context-1m retry. Pre-v3.19.2 behavior: the 400 propagated to the client.
+
+### Added
+
+- **Test coverage for the capture-artifact filter (`test/live-fingerprint.mjs`).** One additional assertion verifies `x-api-key` is excluded from `header_values` when present in the captured request, and the schema-v2 fixture's headers now include the real capture-env placeholder to exercise the path end-to-end.
+
+Total test footprint: **705 assertions across 20 files** (was 704). Full `npm test` green.
+
+### Why this release
+
+v3.19.0's schema-v2 capture introduced the "verbatim" principle — whatever CC puts on the wire, we replay. That's the right default for stealth, but two values (`x-api-key`, beta flag set) are environment-dependent: `x-api-key` only exists because dario's capture env forces it, and CC's beta set varies with account tier. v3.19.2 tightens the capture filter to drop the placeholder at write time, adds a defensive skip at replay time so existing caches self-heal, force-adds the oauth beta flag the capture env can't observe, and handles tier-gated beta rejections the same way long-context rejections are already handled — one retry, cached per account.
+
 ## [3.19.1] - 2026-04-16
 
 ### Fixed — Cline reverse-translation shape (dario#40)

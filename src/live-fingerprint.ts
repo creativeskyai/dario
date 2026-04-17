@@ -578,6 +578,14 @@ export function extractTemplate(captured: CapturedRequest): TemplateData | null 
 const STATIC_HEADER_EXCLUDE = new Set<string>([
   // Auth — never replay across identities
   'authorization',
+  // x-api-key is a CAPTURE ARTIFACT (dario#42). During capture we spawn CC
+  // with ANTHROPIC_API_KEY=sk-dario-fingerprint-capture pointing at a loopback
+  // MITM, so CC emits `x-api-key: sk-dario-fingerprint-capture`. Replaying
+  // that placeholder upstream alongside the real OAuth Bearer used to be a
+  // no-op because Anthropic ignored x-api-key when Authorization was present;
+  // as of 2026-04-17 some account tiers now 401 with "invalid x-api-key" when
+  // both are sent. Never capture it.
+  'x-api-key',
   // Body-framing — computed per request
   'content-type', 'content-length', 'transfer-encoding',
   // Host / connection — managed by the HTTP stack
